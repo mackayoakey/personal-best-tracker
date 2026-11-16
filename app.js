@@ -347,7 +347,7 @@ function heatmapView() {
         .map((days) => {
           const d = days[i];
           const cls = ['heat-cell', d.weekend ? 'we' : '', d.logged ? 'on' : '', d.future ? 'future' : '', d.today ? 'today' : ''].filter(Boolean).join(' ');
-          return `<span class="${cls}" title="${fmtDate(d.date)}${d.logged ? ': logged' : ''}"></span>`;
+          return `<button type="button" class="${cls}" data-action="heat-day" data-date="${d.date}" aria-label="${fmtDate(d.date)}${d.logged ? ', logged' : ''}"></button>`;
         })
         .join('');
       return `<span class="heat-dow${i >= 5 ? ' we' : ''}">${letter}</span>${cells}`;
@@ -359,7 +359,7 @@ function heatmapView() {
         <h2>Last ${HEAT_WEEKS} Weeks</h2>
         <span class="sub">${total} day${total === 1 ? '' : 's'} logged</span>
       </div>
-      <div class="heat-grid" style="grid-template-columns: auto repeat(${HEAT_WEEKS}, minmax(0, 1fr))" role="img" aria-label="${total} days logged in the last ${HEAT_WEEKS} weeks">${head}${rows}</div>
+      <div class="heat-grid" style="grid-template-columns: auto repeat(${HEAT_WEEKS}, minmax(0, 1fr))" aria-label="${total} days logged in the last ${HEAT_WEEKS} weeks">${head}${rows}</div>
       <div class="heat-key"><span><i style="background:var(--accent)"></i>Logged</span><span><i style="background:var(--panel-2)"></i>Nothing</span><span><i style="background:#1f2227"></i>Weekend</span></div>
     </section>`;
 }
@@ -446,7 +446,6 @@ function dashboardView() {
       <h1>${greeting()} 👋</h1>
       <p class="sub">${summary}</p>
     </section>
-    ${heatmapView()}
     <div class="toolbar"><span class="sub">Your Bests</span>${viewToggle('bests', state.bView)}</div>
     ${finderHTML('b', list.length)}
     ${shown.length || !list.length ? '' : '<p class="sub">Nothing matches your search.</p>'}
@@ -1076,6 +1075,33 @@ function showWeekly() {
   weeklyEl.scrollTop = 0;
 }
 
+function showDay(date) {
+  const atts = [];
+  for (const a of state.data.activities) for (const t of a.attempts) if (t.date === date) atts.push({ a, t });
+  const sess = [];
+  for (const e of state.data.exercises) for (const x of e.sessions) if (x.date === date) sess.push({ e, x });
+  const recs = core.recordsLog(state.data).filter((r) => r.date === date);
+  const attHTML = atts
+    .map(({ a, t }) => `<li><a href="#/activity/${a.id}" data-wk-close><strong>${esc(a.name)}</strong></a> ${fmtValue(t.result, a.unit)}${t.notes ? `<div class="sub">${esc(t.notes)}</div>` : ''}${tagChipsHTML(t.tags)}</li>`)
+    .join('');
+  const sesHTML = sess
+    .map(({ e, x }) => {
+      const st = core.sessionStats(x);
+      return `<li><a href="#/exercise/${e.id}" data-wk-close><strong>${esc(e.name)}</strong></a> ${setsText(x.sets, e.unit)}<div class="sub">${x.sets.length} set${x.sets.length === 1 ? '' : 's'}${st.volume ? ` · ${fmtNum(st.volume)} ${esc(e.unit)} total volume` : ''}</div>${x.notes ? `<div class="sub">${esc(x.notes)}</div>` : ''}${tagChipsHTML(x.tags)}</li>`;
+    })
+    .join('');
+  const empty = !atts.length && !sess.length;
+  weeklyEl.innerHTML = `<div class="wn">
+    <button class="btn ghost wk-close" type="button" data-wk-close aria-label="Close">✕</button>
+    <h2>${fmtDate(date)}</h2>
+    ${empty ? '<p class="sub">Nothing logged this day.</p>' : ''}
+    ${atts.length ? `<section class="wk"><h3>Bests</h3><ul class="day-list">${attHTML}</ul></section>` : ''}
+    ${sess.length ? `<section class="wk"><h3>Exercises</h3><ul class="day-list">${sesHTML}</ul></section>` : ''}
+    ${recs.length ? `<p class="sub">🔥 ${recs.map((r) => `${esc(r.name)} · ${esc(r.badges[0])}`).join(', ')}</p>` : ''}
+  </div>`;
+  if (!weeklyEl.open) weeklyEl.showModal();
+}
+
 function checkWeekly() {
   if (whatsNewEl.open || new Date().getDay() !== 1) return;
   const today = core.todayISO();
@@ -1144,10 +1170,12 @@ function render() {
   view.innerHTML = html;
   document.title = title;
   if (route.name === 'exercises') {
-    addBtn.textContent = '＋ New Exercise';
+    addBtn.textContent = '＋';
+    addBtn.setAttribute('aria-label', 'New Exercise');
     addBtn.hidden = !state.data.exercises.length;
   } else {
-    addBtn.textContent = '＋ New Activity';
+    addBtn.textContent = '＋';
+    addBtn.setAttribute('aria-label', 'New Activity');
     addBtn.hidden = route.name !== 'dashboard' || !state.data.activities.length;
   }
 }
@@ -2188,6 +2216,9 @@ function onViewClick(e) {
     case 'flip-direction':
       flipDirection(id);
       break;
+    case 'heat-day':
+      showDay(el.dataset.date);
+      break;
     case 'tag-filter':
       state.tagFilter = el.dataset.tag;
       render();
@@ -2356,7 +2387,7 @@ statusEl.addEventListener('click', () => {
 $('#menu-btn').addEventListener('click', () => {
   const until = unlockedUntil();
   $('#menu-remember').textContent = until
-    ? `This device stays unlocked until ${until.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}.`
+    ? `Unlocked until ${String(until.getMonth() + 1).padStart(2, '0')}/${String(until.getDate()).padStart(2, '0')}/${until.getFullYear()}`
     : '';
   if (!menuEl.open) menuEl.showModal();
 });

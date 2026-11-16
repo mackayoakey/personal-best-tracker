@@ -608,3 +608,9 @@ html, body { overflow-x: hidden; overscroll-behavior-x: none; max-width: 100%; t
 
 #weekly .wn h2 { padding-right: 36px; text-align: left; }
 #weekly .wk-close { top: 10px; right: 10px; }
+
+button.heat-cell { appearance: none; border: 0; padding: 0; cursor: pointer; }
+button.heat-cell.future { cursor: default; }
+#add-btn { font-size: 1.3rem; line-height: 1; padding: 6px 14px; }
+.day-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; text-align: left; }
+.day-list a { color: var(--text); text-decoration: none; }

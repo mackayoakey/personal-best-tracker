@@ -1,6 +1,17 @@
 // Newest first. Add a new entry at the top each time the app changes.
 export const VERSIONS = [
   {
+    number: 'V12',
+    date: '2026-11-16',
+    title: 'Simpler header, heat map with day details',
+    changes: [
+      'The New button at the top is now a simple ＋.',
+      'The heat map lives only on the Exercises page and lights up when you log a Best or an exercise. Tap a day to see what you did.',
+      'Bests and Exercises are removed from the menu (use the tabs).',
+      'The menu now shows “Unlocked until 11/23/2026”.',
+    ],
+  },
+  {
     number: 'V11',
     date: '2026-11-16',
     title: 'Celebrations, Records, and a Monday summary',
