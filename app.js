@@ -18,6 +18,7 @@ const menuEl = $('#menu');
 const statusEl = $('#status');
 const addBtn = $('#add-btn');
 const whatsNewEl = $('#whatsnew');
+const weeklyEl = $('#weekly');
 
 // ---------- state ----------
 
@@ -37,6 +38,12 @@ const state = {
   exView: readJSON(VIEW_KEY, 'tile'),
   bView: readJSON('pbt.bestsView', 'tile'),
   exFilter: '',
+  tagFilter: '',
+  bQ: '',
+  bSort: 'manual',
+  eQ: '',
+  eSort: 'manual',
+  showArchived: false,
 };
 
 function readJSON(key, fallback) {
@@ -357,13 +364,63 @@ function heatmapView() {
     </section>`;
 }
 
+// ---------- search, sort, archive ----------
+
+const lastDate = (list, key) => list.reduce((m, x) => (x[key] > m ? x[key] : m), '');
+
+// Returns the visible items for a scope ('b' = Bests, 'e' = Exercises) after search and sort.
+function finderList(scope, items) {
+  const q = (scope === 'b' ? state.bQ : state.eQ).trim().toLowerCase();
+  const sort = scope === 'b' ? state.bSort : state.eSort;
+  let out = q ? items.filter((x) => `${x.name} ${x.category ?? ''}`.toLowerCase().includes(q)) : [...items];
+  if (sort === 'name') out.sort((a, b) => a.name.localeCompare(b.name));
+  else if (sort === 'recent') {
+    const key = (x) => lastDate(scope === 'b' ? x.attempts : x.sessions, 'date');
+    out.sort((a, b) => (key(a) < key(b) ? 1 : key(a) > key(b) ? -1 : 0));
+  } else if (sort === 'goal' && scope === 'b') {
+    const key = (a) => {
+      const p = core.progress(a);
+      return p ? (p.met ? 1.5 : 1 - p.fraction) : 2;
+    };
+    out.sort((a, b) => key(a) - key(b));
+  }
+  return out;
+}
+
+function finderHTML(scope, total) {
+  if (total < 5) return '';
+  const q = scope === 'b' ? state.bQ : state.eQ;
+  const sort = scope === 'b' ? state.bSort : state.eSort;
+  const opts = [['manual', 'My Order'], ['recent', 'Most Recent'], ['name', 'A–Z'], ...(scope === 'b' ? [['goal', 'Closest To Goal']] : [])];
+  return `<div class="finder">
+    <input type="search" data-finder="${scope}" placeholder="Search" value="${esc(q)}" autocomplete="off" aria-label="Search">
+    <select data-sort="${scope}" aria-label="Sort">${opts.map(([v, l]) => `<option value="${v}"${sort === v ? ' selected' : ''}>${l}</option>`).join('')}</select>
+  </div>`;
+}
+
+const canReorder = (scope) => (scope === 'b' ? state.bSort === 'manual' && !state.bQ.trim() : state.eSort === 'manual' && !state.eQ.trim());
+
+function archivedHTML(scope, archived) {
+  if (!archived.length) return '';
+  const rows = archived
+    .map(
+      (x) =>
+        `<li><span>${esc(x.name)}</span><button class="link" type="button" data-action="${scope === 'b' ? 'unarchive-activity' : 'unarchive-exercise'}" data-id="${x.id}">Restore</button></li>`,
+    )
+    .join('');
+  return `<section class="archived"><button type="button" class="link" data-action="toggle-archived">${state.showArchived ? 'Hide' : 'Show'} Archived (${archived.length})</button>${state.showArchived ? `<ul>${rows}</ul>` : ''}</section>`;
+}
+
 function dashboardView() {
   const today = core.todayISO();
   const notice = isConfigured()
     ? ''
     : `<div class="notice">☁️ Not connected to GitHub yet, so your data stays on this device. <button class="link" data-action="settings">Connect</button></div>`;
-  const list = state.data.activities;
-  if (!list.length) {
+  const all = state.data.activities;
+  const active = all.filter((a) => !a.archived);
+  const archived = all.filter((a) => a.archived);
+  const list = active;
+  if (!all.length) {
     return `${notice}
       ${tabsView('bests')}
       <section class="welcome">
@@ -381,7 +438,8 @@ function dashboardView() {
   const reached = list.filter((a) => a.reachedGoal).length;
   const goals = list.filter((a) => !a.trackOnly && a.target != null).length;
   const summary = `${list.length} activit${list.length === 1 ? 'y' : 'ies'}` + (goals ? ` · ${reached} of ${goals} goal${goals === 1 ? '' : 's'} reached` : '');
-  const hint = list.length > 1 && state.bView === 'tile' ? '<p class="hint">Tip: drag ⋮⋮ to reorder your activities.</p>' : '';
+  const shown = finderList('b', list);
+  const hint = list.length > 1 && state.bView === 'tile' && canReorder('b') ? '<p class="hint">Tip: drag ⋮⋮ to reorder your activities.</p>' : '';
   return `${notice}
     ${tabsView('bests')}
     <section class="hero">
@@ -390,12 +448,14 @@ function dashboardView() {
     </section>
     ${heatmapView()}
     <div class="toolbar"><span class="sub">Your Bests</span>${viewToggle('bests', state.bView)}</div>
+    ${finderHTML('b', list.length)}
+    ${shown.length || !list.length ? '' : '<p class="sub">Nothing matches your search.</p>'}
     ${
       state.bView === 'list'
-        ? `<div class="rows">${list.map((a) => bestRow(a, today)).join('')}</div>
+        ? `<div class="rows">${shown.map((a) => bestRow(a, today)).join('')}</div>
            <button class="row-add" type="button" data-action="new-activity">＋ New Activity</button>`
         : `<div class="cards">
-      ${list.map((a) => cardView(a, today)).join('')}
+      ${shown.map((a) => cardView(a, today)).join('')}
       <button class="card-add" type="button" data-action="new-activity">
         <span class="plus">＋</span>
         <strong>New Activity</strong>
@@ -403,7 +463,8 @@ function dashboardView() {
       </button>
     </div>`
     }
-    ${hint}`;
+    ${hint}
+    ${archivedHTML('b', archived)}`;
 }
 
 function goalButtonLabel(a) {
@@ -451,6 +512,8 @@ function statusLine(a, prog, left) {
   if (st.hasOld) {
     parts.push(st.beaten ? '🏆 Old Best beaten' : st.gap !== null ? `${fmtValue(Number(st.gap.toFixed(4)), a.unit)} to beat Old Best` : 'Beat your Old Best');
   }
+  const next = core.milestoneStatus(a).next;
+  if (next && !a.trackOnly) parts.push(`Next: ${fmtValue(next.value, a.unit)}`);
   if (left !== null) parts.push(daysText(left));
   return parts.join(' · ');
 }
@@ -480,7 +543,7 @@ function cardView(a, today) {
   const line = needsGoal ? '' : statusLine(a, prog, left);
   return `
     <article class="card compact${a.reachedGoal ? ' reached' : ''}" data-action="open" data-id="${a.id}">
-      <button class="drag-handle" type="button" aria-label="Drag to reorder ${esc(a.name)}">⋮⋮</button>
+      ${canReorder('b') ? `<button class="drag-handle" type="button" aria-label="Drag to reorder ${esc(a.name)}">⋮⋮</button>` : ''}
       <div class="card-body">
         <div class="card-head">
           <h2>${esc(a.name)}</h2>
@@ -525,7 +588,12 @@ function detailView(a) {
   const prog = core.progress(a);
   const tr = core.trend(a);
   const left = core.goalDaysLeft(a, today);
-  const history = core.sortAttempts(a.attempts).reverse();
+  const allHistory = core.sortAttempts(a.attempts).reverse();
+  const usedTags = [...new Set(allHistory.flatMap((t) => t.tags ?? []))];
+  if (state.tagFilter && !usedTags.includes(state.tagFilter)) state.tagFilter = '';
+  const history = state.tagFilter ? allHistory.filter((t) => (t.tags ?? []).includes(state.tagFilter)) : allHistory;
+  const insight = core.tagInsight(a);
+  const ms = core.milestoneStatus(a);
   const oldId = core.oldBest(a)?.attemptId;
   const newId = core.newBest(a)?.attemptId;
 
@@ -539,6 +607,7 @@ function detailView(a) {
           ${t.id === newId ? '<span class="badge">New Best</span>' : ''}${t.id === oldId ? '<span class="badge">Old Best</span>' : ''}${core.isNewAttempt(t) ? '' : '<span class="sub">(before 11/15/2026)</span>'}
         </div>
         ${t.notes ? `<p class="notes">${esc(t.notes)}</p>` : ''}
+        ${tagChipsHTML(t.tags)}
         <div class="row-actions">
           <button class="link" data-action="edit-attempt" data-id="${a.id}" data-attempt="${t.id}">Edit</button>
           <button class="link danger" data-action="delete-attempt" data-id="${a.id}" data-attempt="${t.id}">Delete</button>
@@ -557,6 +626,7 @@ function detailView(a) {
       </div>
       <div class="row-actions">
         <button class="btn" data-action="edit-activity" data-id="${a.id}">✏️ Edit Activity</button>
+        <button class="btn" data-action="archive-activity" data-id="${a.id}">Archive</button>
         <button class="btn danger" data-action="delete-activity" data-id="${a.id}">Delete</button>
       </div>
     </header>
@@ -582,12 +652,21 @@ function detailView(a) {
       }</p>
     </section>
 
+    ${
+      ms.rows.length
+        ? `<section class="panel"><h2>⭐ Milestones</h2>
+      <p class="sub">${ms.next ? `Next up: ${fmtValue(ms.next.value, a.unit)}` : 'All milestones reached. Nice work.'}</p>
+      <div class="ms-row">${ms.rows.map((r) => `<span class="ms${r.reached ? ' done' : r === ms.next ? ' next' : ''}">${r.reached ? '✓ ' : ''}${fmtValue(r.value, a.unit)}</span>`).join('')}</div></section>`
+        : ''
+    }
+
     <section class="panel">
       <h2>＋ Log an Attempt</h2>
       <form class="attempt-form" data-form="attempt-new" data-id="${a.id}">
         <label>Date<input type="date" name="date" required value="${today}"></label>
         <label>Result${a.unit ? ` (${esc(a.unit)})` : ''}${valueInputHTML('result', a.unit, '', true)}${core.isTimeUnit(a.unit) ? `<small>${esc(core.timeHelp(a.unit))}</small>` : ''}</label>
         <label class="wide">Notes<textarea name="notes" rows="2" placeholder="Optional"></textarea></label>
+        <details class="wide tags-details"><summary>Add Tags</summary>${tagsFieldHTML([])}</details>
         <button class="btn primary wide" type="submit">Log Attempt</button>
       </form>
     </section>
@@ -600,7 +679,15 @@ function detailView(a) {
 
     <section class="panel">
       <h2>🕘 History</h2>
-      ${history.length ? `<ul class="attempts">${rows}</ul>` : '<p class="sub">No attempts yet. Log your first one above.</p>'}
+      ${insight ? `<p class="sub">Your results are best on average when tagged <strong>${esc(insight.tag)}</strong>.</p>` : ''}
+      ${
+        usedTags.length
+          ? `<div class="chips tag-filter"><button type="button" class="chip${state.tagFilter === '' ? ' active' : ''}" data-action="tag-filter" data-tag="">All</button>${usedTags
+              .map((t) => `<button type="button" class="chip${state.tagFilter === t ? ' active' : ''}" data-action="tag-filter" data-tag="${esc(t)}">${esc(t)}</button>`)
+              .join('')}</div>`
+          : ''
+      }
+      ${history.length ? `<ul class="attempts">${rows}</ul>` : allHistory.length ? '<p class="sub">No attempts with that tag.</p>' : '<p class="sub">No attempts yet. Log your first one above.</p>'}
       ${a.startBest ? `<p class="sub start-line">Old Best entered: ${fmtValue(a.startBest.value, a.unit)} on ${fmtDate(a.startBest.date)}</p>` : ''}
     </section>`;
 }
@@ -689,9 +776,11 @@ function exerciseRow(e) {
 }
 
 function exercisesView() {
-  const list = state.data.exercises;
+  const allEx = state.data.exercises;
+  const list = allEx.filter((e) => !e.archived);
+  const archivedEx = allEx.filter((e) => e.archived);
   const tabs = tabsView('exercises');
-  if (!list.length) {
+  if (!allEx.length) {
     return `${tabs}
       <section class="welcome">
         <h1>Track the Exercises You Like</h1>
@@ -706,7 +795,7 @@ function exercisesView() {
   const filters = [['', 'All'], ...cats.map((c) => [c, c])];
   if (hasNone && cats.length) filters.push(['__none__', 'Other']);
   if (!filters.some(([v]) => v === state.exFilter)) state.exFilter = '';
-  const shown = list.filter((e) => !state.exFilter || (state.exFilter === '__none__' ? !e.category : e.category === state.exFilter));
+  const shown = finderList('e', list.filter((e) => !state.exFilter || (state.exFilter === '__none__' ? !e.category : e.category === state.exFilter)));
 
   const chips = cats.length
     ? `<div class="chips" role="group" aria-label="Filter by category">${filters
@@ -727,7 +816,9 @@ function exercisesView() {
   return `${tabs}
     ${heatmapView()}
     <div class="toolbar">${chips}${toggle}</div>
+    ${finderHTML('e', list.length)}
     ${body}
+    ${archivedHTML('e', archivedEx)}
     <p class="hint"><button class="link" type="button" data-action="manage-categories">Manage Categories</button></p>`;
 }
 
@@ -753,6 +844,7 @@ function exerciseDetailView(e) {
           ${best && s.id === best.session.id ? '<span class="badge">Best Top Set</span>' : ''}
         </div>
         ${s.notes ? `<p class="notes">${esc(s.notes)}</p>` : ''}
+        ${tagChipsHTML(s.tags)}
         <div class="row-actions">
           <button class="link" data-action="edit-session" data-id="${e.id}" data-session="${s.id}">Edit</button>
           <button class="link danger" data-action="delete-session" data-id="${e.id}" data-session="${s.id}">Delete</button>
@@ -771,6 +863,7 @@ function exerciseDetailView(e) {
       </div>
       <div class="row-actions">
         <button class="btn" data-action="edit-exercise" data-id="${e.id}">Edit Exercise</button>
+        <button class="btn" data-action="archive-exercise" data-id="${e.id}">Archive</button>
         <button class="btn danger" data-action="delete-exercise" data-id="${e.id}">Delete</button>
       </div>
     </header>
@@ -930,6 +1023,71 @@ function versionsView() {
     <div class="versions">${items}</div>`;
 }
 
+function recordsView() {
+  const log = core.recordsLog(state.data);
+  const items = log
+    .map((r) => {
+      const link = r.kind === 'best' ? `#/activity/${r.id}` : `#/exercise/${r.id}`;
+      const what = r.kind === 'best' ? fmtValue(r.value, r.unit) : topSetText(r.stats, r.unit);
+      return `<li class="rec"><span class="rec-dot" aria-hidden="true"></span>
+        <div><a href="${link}"><strong>${esc(r.name)}</strong></a> <span class="rec-val">${what}</span>
+        <div class="sub">${fmtDate(r.date)}</div>
+        <div class="tag-row">${r.badges.map((b) => `<span class="tag hot">${esc(b)}</span>`).join('')}</div></div></li>`;
+    })
+    .join('');
+  return `<nav class="crumbs"><a href="#/">← All Activities</a></nav>
+    <h1>Records</h1>
+    <p class="sub">Every Old Best beaten, target reached and new best, newest first.</p>
+    ${log.length ? `<ul class="records">${items}</ul>` : '<p class="sub">No records yet. Your first new best will show up here.</p>'}`;
+}
+
+// ---------- weekly summary ----------
+
+const WEEKLY_KEY = 'pbt.weeklyShown';
+
+function weekBlock(title, w, prev) {
+  const delta = prev ? w.days - prev.days : null;
+  const dtxt = delta === null || delta === 0 ? '' : ` <span class="${delta > 0 ? 'up' : 'down'}">${delta > 0 ? '▲' : '▼'} ${Math.abs(delta)}</span>`;
+  const recs = w.records.length
+    ? `<ul class="wk-records">${w.records.slice(0, 5).map((r) => `<li>🔥 ${esc(r.name)} · ${esc(r.badges[0])}</li>`).join('')}</ul>`
+    : '';
+  return `<section class="wk"><h3>${title}</h3>
+    <div class="wk-stats">
+      <div><strong>${w.days}</strong><span>Days Logged${dtxt}</span></div>
+      <div><strong>${w.attempts}</strong><span>Attempts</span></div>
+      <div><strong>${w.sessions}</strong><span>Sessions</span></div>
+      <div><strong>${w.records.length}</strong><span>Records</span></div>
+    </div>${recs}</section>`;
+}
+
+function showWeekly() {
+  const mon = core.mondayOf(core.todayISO());
+  const last = core.weekSummary(state.data, core.addDaysISO(mon, -7));
+  const before = core.weekSummary(state.data, core.addDaysISO(mon, -14));
+  const now = core.weekSummary(state.data, mon);
+  weeklyEl.innerHTML = `<div class="wn">
+      <button class="btn ghost wk-close" type="button" data-wk-close aria-label="Close">✕</button>
+      <h2>Weekly Summary</h2>
+      ${weekBlock('Last Week', last, before)}
+      ${weekBlock('This Week So Far', now, last)}
+      <div class="dlg-actions"><span class="grow"></span><button class="btn primary" type="button" data-wk-close>Got It</button></div>
+    </div>`;
+  if (!weeklyEl.open) weeklyEl.showModal();
+  weeklyEl.scrollTop = 0;
+}
+
+function checkWeekly() {
+  if (whatsNewEl.open || new Date().getDay() !== 1) return;
+  const today = core.todayISO();
+  try {
+    if (localStorage.getItem(WEEKLY_KEY) === today) return;
+    localStorage.setItem(WEEKLY_KEY, today);
+  } catch {
+    /* storage unavailable */
+  }
+  showWeekly();
+}
+
 // ---------- routing and rendering ----------
 
 function parseRoute() {
@@ -939,6 +1097,7 @@ function parseRoute() {
   const exDetail = hash.match(/^#\/exercise\/([\w-]+)$/);
   if (exDetail) return { name: 'exercise', id: exDetail[1] };
   if (hash === '#/exercises') return { name: 'exercises' };
+  if (hash === '#/records') return { name: 'records' };
   if (hash === '#/ideas') return { name: 'ideas' };
   if (hash === '#/versions') return { name: 'versions' };
   return { name: 'dashboard' };
@@ -969,6 +1128,9 @@ function render() {
   } else if (route.name === 'exercises') {
     html = exercisesView();
     title = 'Exercises · Personal Bests';
+  } else if (route.name === 'records') {
+    html = recordsView();
+    title = 'Records · Personal Bests';
   } else if (route.name === 'ideas') {
     html = ideasView();
     title = 'Ideas · Personal Bests';
@@ -1029,6 +1191,8 @@ function applyUnitHints(form) {
 }
 
 function fieldInner(f) {
+  if (f.type === 'tags') return tagsFieldHTML(f.value ?? []);
+  if (f.type === 'action') return `<button type="button" class="btn small" data-field-action="${f.id}">${esc(f.label)}</button>`;
   if (f.type === 'value') {
     return `<label>${esc(f.label)}${valueInputHTML(f.name, f.unit, f.value ?? '', f.required)}${f.hint ? `<small>${esc(f.hint)}</small>` : ''}<small class="time-hint" ${core.isTimeUnit(f.unit) ? '' : 'hidden'}>${core.isTimeUnit(f.unit) ? esc(core.timeHelp(f.unit)) : ''}</small></label>`;
   }
@@ -1044,6 +1208,10 @@ function fieldInner(f) {
     return `<div class="sets" data-sets>
       <div class="sets-head"><span>Set</span><span>Weight (${esc(f.unit)})</span><span>Reps</span><span></span></div>
       <div data-sets-list style="display:grid;gap:8px">${rows}</div>
+      <div class="plate-bar" data-plate-bar data-unit="${esc(f.unit)}">
+        <div class="plate-adj">${[-5, -2.5, 2.5, 5, 10].map((n) => `<button type="button" data-plate-adj="${n}">${n > 0 ? '+' : '−'}${Math.abs(n)}</button>`).join('')}</div>
+        <div class="plate-text" data-plate-text>Tap a weight to see the plates and adjust it.</div>
+      </div>
       <button type="button" class="btn small" data-add-set>＋ Add Set</button>
       <small>Leave weight empty for bodyweight exercises.</small>
     </div>`;
@@ -1131,6 +1299,46 @@ function openDialog(title, fields, { submitLabel = 'Save', onSubmit, secondary, 
       row.querySelector('.set-n').textContent = i + 1;
     });
   };
+  const plateBar = form.querySelector('[data-plate-bar]');
+  if (plateBar) {
+    let current = null;
+    const showPlates = () => {
+      const w = Number(current?.value);
+      const unit = plateBar.dataset.unit;
+      const text = plateBar.querySelector('[data-plate-text]');
+      if (!current) {
+        text.textContent = 'Tap a weight to see the plates and adjust it.';
+        return;
+      }
+      if (!(w > 0)) {
+        text.textContent = 'Enter a weight to see the plates.';
+        return;
+      }
+      const r = core.platesPerSide(w, unit);
+      if (r.underBar) text.textContent = `Lighter than the ${r.bar} ${unit} bar.`;
+      else if (!r.plates.length) text.textContent = `Just the ${r.bar} ${unit} bar.`;
+      else text.textContent = `Per side: ${r.plates.join(' + ')}${r.leftover ? ` (+${fmtNum(r.leftover)} ${unit} unmatched)` : ''}`;
+    };
+    form.addEventListener('focusin', (e) => {
+      if (e.target.matches('[data-sets-list] [name=weight]')) {
+        current = e.target;
+        showPlates();
+      }
+    });
+    form.addEventListener('input', (e) => {
+      if (e.target === current) showPlates();
+    });
+    // Pointer-down is cancelled so the weight box keeps focus (and the keyboard) while adjusting.
+    plateBar.addEventListener('pointerdown', (e) => e.preventDefault());
+    plateBar.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-plate-adj]');
+      if (!b || !current) return;
+      const next = Math.max(0, (Number(current.value) || 0) + Number(b.dataset.plateAdj));
+      current.value = String(Math.round(next * 100) / 100);
+      current.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  }
+
   form.addEventListener('click', (e) => {
     const list = form.querySelector('[data-sets-list]');
     if (!list) return;
@@ -1326,6 +1534,14 @@ function openGoalDialog(id) {
         hint: `${a.direction === 'lower' ? 'Lower' : 'Higher'} is better.${best ? ` Your best so far is ${fmtValue(best.value, a.unit)}.` : ''}`,
       },
       { name: 'goalDate', type: 'date', label: 'Goal Date', value: a.trackOnly ? '' : (a.goalDate ?? ''), hint: 'Optional deadline.' },
+      {
+        name: 'milestones',
+        type: 'textarea',
+        label: 'Milestones (Optional)',
+        rows: 3,
+        value: (a.milestones ?? []).map((m) => core.inputText(m, a.unit)).join('\n'),
+      },
+      { type: 'action', id: 'suggest', label: '✨ Suggest Milestones' },
     ],
     {
       message: 'A goal is the number you are working toward. It does not change your attempts or records.',
@@ -1334,7 +1550,7 @@ function openGoalDialog(id) {
         ? {
             label: 'Remove Goal',
             onClick: () => {
-              commit((d) => core.updateActivity(core.findActivity(d, id), { trackOnly: true, target: null, goalDate: null }));
+              commit((d) => core.updateActivity(core.findActivity(d, id), { trackOnly: true, target: null, goalDate: null, milestones: [] }));
               toast('Goal removed. This activity is now track only.');
             },
           }
@@ -1345,11 +1561,14 @@ function openGoalDialog(id) {
         if (base.value.target === null) return 'Enter a target number.';
         const ob = core.oldBest(a);
         if (ob && core.meetsTarget(ob.value, base.value.target, a.direction)) return BEHIND_RECORD_MSG;
+        const ms = core.parseMilestones(raw.milestones, a.unit);
+        if (ms.error) return ms.error;
         commit((d) =>
           core.updateActivity(core.findActivity(d, id), {
             trackOnly: false,
             target: base.value.target,
             goalDate: base.value.goalDate,
+            milestones: core.sortMilestones(a, ms.value),
           }),
         );
         toast('Goal saved 🎯');
@@ -1357,6 +1576,19 @@ function openGoalDialog(id) {
       },
     },
   );
+
+  const form = dlg.querySelector('form');
+  form.querySelector('[data-field-action=suggest]').addEventListener('click', () => {
+    const t = core.parseValue(form.querySelector('[name=target]').value, a.unit);
+    const target = t.value ?? a.target;
+    const list = core.suggestMilestones({ ...a, target, milestones: [] });
+    if (!list.length) {
+      toast('Enter a target that is ahead of your best first.');
+      return;
+    }
+    form.querySelector('[name=milestones]').value = list.map((m) => core.inputText(m, a.unit)).join('\n');
+    form.querySelector('[name=milestones]').dispatchEvent(new Event('input', { bubbles: true }));
+  });
 }
 
 function openAttemptDialog(activityId, attemptId = null) {
@@ -1376,18 +1608,24 @@ function openAttemptDialog(activityId, attemptId = null) {
         value: core.inputText(t?.result, a.unit),
       },
       { name: 'notes', type: 'textarea', label: 'Notes', value: t?.notes ?? '' },
+      { type: 'tags', value: t?.tags ?? [] },
     ],
     {
       submitLabel: t ? 'Save' : 'Log Attempt',
       secondary: t ? { label: 'Delete', onClick: () => deleteAttempt(activityId, attemptId) } : null,
-      onSubmit: (raw) => {
-        const { error, value } = core.parseAttemptInput(raw, a.unit);
+      onSubmit: (raw, form) => {
+        const { error, value } = core.parseAttemptInput({ ...raw, tags: readTags(form) }, a.unit);
         if (error) return error;
-        commit((d) => {
+        const result = commit((d) => {
+          core.rememberTags(d, value.tags);
           const act = core.findActivity(d, activityId);
-          if (t) core.updateAttempt(act, attemptId, value);
-          else core.addAttempt(act, value);
+          if (t) {
+            core.updateAttempt(act, attemptId, value);
+            return null;
+          }
+          return core.addAttempt(act, value);
         });
+        if (result) afterAttempt(a, result);
         return null;
       },
     },
@@ -1419,6 +1657,14 @@ function openExerciseDialog(id = null) {
           ['lb', 'Pounds (lb)'],
           ['kg', 'Kilograms (kg)'],
         ],
+      },
+      {
+        name: 'linkedActivityId',
+        type: 'select',
+        label: 'Link To A Best (Optional)',
+        value: existing?.linkedActivityId ?? '',
+        options: [['', 'Not Linked'], ...state.data.activities.filter((a) => !a.archived).map((a) => [a.id, `${a.name} (${a.unit || 'no unit'})`])],
+        hint: 'Lets a heavy set also count as an attempt on that Best. Its unit should be lb or kg.',
       },
       { name: 'notes', type: 'textarea', label: 'Details (Optional)', value: existing?.notes ?? '' },
     ],
@@ -1493,12 +1739,16 @@ function openSessionDialog(exerciseId, sessionId = null) {
   // A new session starts from the last one, so you only change what moved.
   const basis = existing ?? core.lastSession(e);
   const sets = basis ? basis.sets.map((s) => ({ ...s })) : [{}, {}, {}];
+  const linked = !existing && e.linkedActivityId ? core.findActivity(state.data, e.linkedActivityId) : null;
+  const canLink = linked && !linked.archived && core.normalizeUnit(linked.unit) === e.unit;
   openDialog(
     existing ? `Edit Session · ${e.name}` : `Log Session · ${e.name}`,
     [
       { name: 'date', type: 'date', label: 'Date', required: true, value: existing?.date ?? core.todayISO() },
       { type: 'sets', value: sets, unit: e.unit },
       { name: 'notes', type: 'textarea', label: 'Notes', value: existing?.notes ?? '', rows: 2 },
+      { type: 'tags', value: existing?.tags ?? [] },
+      ...(canLink ? [{ name: 'alsoBest', type: 'checkbox', label: `Also log my heaviest set as an attempt for ${linked.name}`, value: true }] : []),
     ],
     {
       message: !existing && basis ? 'Started from your last session. Change what is different today.' : '',
@@ -1509,15 +1759,30 @@ function openSessionDialog(exerciseId, sessionId = null) {
           weight: row.querySelector('[name=weight]').value,
           reps: row.querySelector('[name=reps]').value,
         }));
-        const { error, value } = core.parseSessionInput({ date: raw.date, notes: raw.notes, sets: rows });
+        const { error, value } = core.parseSessionInput({ date: raw.date, notes: raw.notes, sets: rows, tags: readTags(form) });
         if (error) return error;
-        commit((d) => {
+        const outcome = commit((d) => {
+          core.rememberTags(d, value.tags);
           const ex = core.findExercise(d, exerciseId);
-          if (existing) core.updateSession(ex, sessionId, value);
-          else core.addSession(ex, value);
+          if (existing) {
+            core.updateSession(ex, sessionId, value);
+            return null;
+          }
+          return core.addSession(ex, value);
         });
-        const change = core.sessionChange(core.findExercise(state.data, exerciseId));
-        if (!existing) toast(change?.dir === 'up' ? `Session logged ✓  ${change.text}` : 'Session logged ✓');
+        if (!existing && canLink && form.querySelector('[name=alsoBest]')?.checked) {
+          const top = core.sessionStats(value).topWeight;
+          if (top > 0) {
+            const res = commit((d) => core.addAttempt(core.findActivity(d, linked.id), { date: value.date, result: top, notes: `From ${e.name}`, tags: value.tags }));
+            afterAttempt(linked, res);
+            return null;
+          }
+        }
+        if (!existing) {
+          const change = core.sessionChange(core.findExercise(state.data, exerciseId));
+          if (outcome?.record) celebrate(`🔥 New best top set on ${e.name}!${change ? `  ${change.text}` : ''}`);
+          else toast(change?.dir === 'up' ? `Session logged ✓  ${change.text}` : 'Session logged ✓');
+        }
         return null;
       },
     },
@@ -1750,9 +2015,65 @@ function checkWhatsNew() {
   if (seen || existingUser) showWhatsNew(current, seen);
 }
 
+weeklyEl.addEventListener('click', (e) => {
+  if (e.target === weeklyEl || e.target.closest('[data-wk-close]')) weeklyEl.close();
+});
+$('#weekly-btn').addEventListener('click', showWeekly);
+
 whatsNewEl.addEventListener('click', (e) => {
   if (e.target === whatsNewEl || e.target.closest('[data-wn-close]') || e.target.closest('[data-wn-history]')) whatsNewEl.close();
 });
+
+// ---------- celebration ----------
+
+function celebrate(message) {
+  toast(message);
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const layer = document.createElement('div');
+  layer.className = 'confetti';
+  layer.setAttribute('aria-hidden', 'true');
+  const colors = ['#f0985a', '#e8704a', '#d9b25f', '#7fc4c0', '#efe6dc'];
+  for (let i = 0; i < 48; i++) {
+    const p = document.createElement('i');
+    p.style.left = `${Math.random() * 100}%`;
+    p.style.background = colors[i % colors.length];
+    p.style.animationDelay = `${Math.random() * 0.35}s`;
+    p.style.animationDuration = `${1.4 + Math.random() * 1.2}s`;
+    p.style.setProperty('--dx', `${Math.random() * 160 - 80}px`);
+    p.style.setProperty('--rot', `${Math.random() * 720 - 360}deg`);
+    layer.append(p);
+  }
+  document.body.append(layer);
+  setTimeout(() => layer.remove(), 3000);
+}
+
+// What to say (and whether to celebrate) after an attempt is logged.
+function afterAttempt(activity, result) {
+  const ev = result.events;
+  if (ev.target) celebrate(`🎯 Target reached on ${activity.name}!`);
+  else if (ev.beatOld) celebrate(`🏆 You beat your Old Best on ${activity.name}!`);
+  else if (ev.milestone !== null) celebrate(`⭐ Milestone reached: ${fmtValue(ev.milestone, activity.unit)}`);
+  else if (ev.newBest) celebrate('🔥 New Best!');
+  else toast('Attempt logged ✓');
+}
+
+// ---------- tags ----------
+
+function tagsFieldHTML(selected = []) {
+  const options = [...new Set([...state.data.tags, ...selected])];
+  const chips = options
+    .map((t) => `<label class="tag-chip"><input type="checkbox" name="tag" value="${esc(t)}" ${selected.includes(t) ? 'checked' : ''}><span>${esc(t)}</span></label>`)
+    .join('');
+  return `<div class="tags-field"><span class="field-label">Tags (Optional)</span><div class="tag-chips">${chips}</div><input type="text" name="tag_new" placeholder="Add Another Tag" autocomplete="off" maxlength="30"></div>`;
+}
+
+function readTags(form) {
+  const picked = [...form.querySelectorAll('input[name=tag]:checked')].map((i) => i.value);
+  const extra = String(form.querySelector('[name=tag_new]')?.value ?? '').split(',').map((t) => t.trim()).filter(Boolean);
+  return [...picked, ...extra];
+}
+
+const tagChipsHTML = (tags) => (tags?.length ? `<div class="tag-row">${tags.map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : '');
 
 // ---------- toast ----------
 
@@ -1817,6 +2138,36 @@ function onViewClick(e) {
     case 'delete-attempt':
       deleteAttempt(id, attempt);
       break;
+    case 'archive-activity':
+      commit((d) => {
+        core.findActivity(d, id).archived = true;
+      });
+      location.hash = '#/';
+      toast('Archived. Find it under Archived on the Bests page.');
+      break;
+    case 'unarchive-activity':
+      commit((d) => {
+        core.findActivity(d, id).archived = false;
+      });
+      toast('Restored ✓');
+      break;
+    case 'archive-exercise':
+      commit((d) => {
+        core.findExercise(d, id).archived = true;
+      });
+      location.hash = '#/exercises';
+      toast('Archived. Find it under Archived on the Exercises page.');
+      break;
+    case 'unarchive-exercise':
+      commit((d) => {
+        core.findExercise(d, id).archived = false;
+      });
+      toast('Restored ✓');
+      break;
+    case 'toggle-archived':
+      state.showArchived = !state.showArchived;
+      render();
+      break;
     case 'filter':
       state.exFilter = cat;
       render();
@@ -1836,6 +2187,10 @@ function onViewClick(e) {
       break;
     case 'flip-direction':
       flipDirection(id);
+      break;
+    case 'tag-filter':
+      state.tagFilter = el.dataset.tag;
+      render();
       break;
     case 'open-exercise':
       location.hash = `#/exercise/${id}`;
@@ -1875,13 +2230,16 @@ function onViewSubmit(e) {
   if (form.dataset.form === 'attempt-new') {
     e.preventDefault();
     const attemptActivity = core.findActivity(state.data, form.dataset.id);
-    const { error, value } = core.parseAttemptInput(Object.fromEntries(new FormData(form)), attemptActivity?.unit);
+    const { error, value } = core.parseAttemptInput({ ...Object.fromEntries(new FormData(form)), tags: readTags(form) }, attemptActivity?.unit);
     if (error) {
       toast(error);
       return;
     }
-    const { newRecord } = commit((d) => core.addAttempt(core.findActivity(d, form.dataset.id), value));
-    toast(newRecord ? '🔥 New personal best!' : 'Attempt logged ✓');
+    const result = commit((d) => {
+      core.rememberTags(d, value.tags);
+      return core.addAttempt(core.findActivity(d, form.dataset.id), value);
+    });
+    afterAttempt(attemptActivity, result);
   } else if (form.dataset.form === 'idea-new') {
     e.preventDefault();
     const text = String(new FormData(form).get('text') ?? '').trim();
@@ -1938,9 +2296,16 @@ function onDragStart(e) {
       state.suppressClick = false;
     }, 300);
     if (to !== from) {
+      const ids = cards.map((c) => c.dataset.id);
+      const [movedId] = ids.splice(from, 1);
+      ids.splice(to, 0, movedId);
       commit((d) => {
-        const [moved] = d.activities.splice(from, 1);
-        d.activities.splice(to, 0, moved);
+        // Visible cards take the slots the visible activities held, so archived ones stay put.
+        const slots = d.activities.map((a, i) => (ids.includes(a.id) ? i : -1)).filter((i) => i >= 0);
+        const byId = new Map(d.activities.map((a) => [a.id, a]));
+        ids.forEach((id, k) => {
+          d.activities[slots[k]] = byId.get(id);
+        });
       });
     }
   };
@@ -1959,6 +2324,26 @@ function onDragStart(e) {
 view.addEventListener('click', onViewClick);
 view.addEventListener('submit', onViewSubmit);
 view.addEventListener('keydown', onViewKeydown);
+// Search re-renders the list as you type; focus and caret are put back so typing is not interrupted.
+view.addEventListener('input', (e) => {
+  const box = e.target.closest('[data-finder]');
+  if (!box) return;
+  const scope = box.dataset.finder;
+  const pos = box.selectionStart;
+  if (scope === 'b') state.bQ = box.value;
+  else state.eQ = box.value;
+  render();
+  const again = view.querySelector(`[data-finder="${scope}"]`);
+  again?.focus({ preventScroll: true });
+  again?.setSelectionRange(pos, pos);
+});
+view.addEventListener('change', (e) => {
+  const sel = e.target.closest('[data-sort]');
+  if (!sel) return;
+  if (sel.dataset.sort === 'b') state.bSort = sel.value;
+  else state.eSort = sel.value;
+  render();
+});
 view.addEventListener('pointerdown', onDragStart);
 
 addBtn.addEventListener('click', () => (parseRoute().name === 'exercises' ? openExerciseDialog() : openActivityDialog()));
@@ -2001,6 +2386,7 @@ dlg.addEventListener('cancel', (e) => {
 });
 
 window.addEventListener('hashchange', () => {
+  state.tagFilter = '';
   window.scrollTo(0, 0);
   render();
 });
@@ -2040,8 +2426,9 @@ function start() {
   state.started = true;
   render();
   setStatus(isConfigured() ? 'syncing' : 'local');
-  pull();
+  const pulled = pull();
   checkWhatsNew();
+  Promise.resolve(pulled).catch(() => {}).finally(checkWeekly);
 }
 
 if (isUnlocked()) start();

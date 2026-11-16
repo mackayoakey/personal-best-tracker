@@ -1,6 +1,21 @@
 // Newest first. Add a new entry at the top each time the app changes.
 export const VERSIONS = [
   {
+    number: 'V11',
+    date: '2026-11-16',
+    title: 'Celebrations, Records, and a Monday summary',
+    changes: [
+      'Beat your Old Best, hit a target, or reach a milestone and the app celebrates. Exercises celebrate new best top sets too.',
+      'A new Records page (in the menu) lists every record you have set, newest first.',
+      'The weekly summary appears the first time you open the app on a Monday. Close it with the ✕, and reopen it any time from the 📊 button at the top.',
+      'Milestones: add steps between your best and your target. Suggest Milestones fills them in for you.',
+      'The set editor has quick weight buttons (−5, −2.5, +2.5, +5, +10) and shows the plates to load on each side.',
+      'Link an exercise to a Best, and logging a session can also log your heaviest set as an attempt.',
+      'Search and sort Bests and Exercises, and archive ones you no longer track without losing their history.',
+      'Add tags and notes to attempts and sessions, filter history by tag, and see which tag your best results share.',
+    ],
+  },
+  {
     number: 'V10',
     date: '2026-11-16',
     title: 'Compact cards, list view, and a steadier page',

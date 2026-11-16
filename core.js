@@ -7,6 +7,7 @@ const DAY_MS = 86400000;
 export const NEW_BESTS_START = '2026-11-15';
 
 export const DEFAULT_CATEGORIES = ['Push', 'Pull', 'Legs', 'Abs', 'Cardio'];
+export const DEFAULT_TAGS = ['Felt Strong', 'Felt Tired', 'Well Rested', 'Slept Badly', 'Sore', 'Great Conditions'];
 
 // ---------- units ----------
 
@@ -61,7 +62,7 @@ export function rememberUnit(data, unit) {
 }
 
 export function emptyData() {
-  return { version: SCHEMA_VERSION, activities: [], ideas: [], exercises: [], categories: [...DEFAULT_CATEGORIES], customUnits: [] };
+  return { version: SCHEMA_VERSION, activities: [], ideas: [], exercises: [], categories: [...DEFAULT_CATEGORIES], customUnits: [], tags: [...DEFAULT_TAGS] };
 }
 
 export function newId() {
@@ -383,7 +384,7 @@ export function parseAttemptInput(raw, unit = '') {
   const r = parseValue(raw.result, unit);
   if (r.error) return { error: r.error };
   if (r.value === null) return { error: isTimeUnit(unit) ? `Enter the result. ${timeHelp(unit)}` : 'Enter the result as a number.' };
-  return { value: { date: raw.date, result: r.value, notes: String(raw.notes ?? '').trim() } };
+  return { value: { date: raw.date, result: r.value, notes: String(raw.notes ?? '').trim(), tags: cleanTags(raw.tags) } };
 }
 
 export function createActivity(data, input) {
@@ -397,15 +398,40 @@ export function updateActivity(activity, input) {
   return refreshFlags(activity);
 }
 
-// Returns { attempt, newRecord }. newRecord is true when this attempt beats the record it was logged against.
+const metTarget = (activity) =>
+  !activity.trackOnly && activity.target != null && newAttempts(activity).some((t) => meetsTarget(t.result, activity.target, activity.direction));
+
+// Returns { attempt, newRecord, events }. events says what this attempt achieved:
+// beatOld (first time beating the Old Best), target (first time reaching it), milestone (a value), newBest (improved your New Best).
 export function addAttempt(activity, input) {
-  const before = currentBest(activity);
-  const attempt = { id: newId(), date: input.date, result: input.result, notes: input.notes ?? '', createdAt: Date.now() };
+  const before = {
+    best: currentBest(activity),
+    beaten: oldBestStatus(activity).beaten,
+    met: metTarget(activity),
+    nb: newBest(activity),
+    ms: new Set(milestoneStatus(activity).rows.filter((r) => r.reached).map((r) => r.value)),
+  };
+  const attempt = {
+    id: newId(),
+    date: input.date,
+    result: input.result,
+    notes: input.notes ?? '',
+    tags: cleanTags(input.tags),
+    createdAt: Date.now(),
+  };
   activity.attempts.push(attempt);
   refreshFlags(activity);
   const after = currentBest(activity);
-  const newRecord = Boolean(before) && after.attemptId === attempt.id;
-  return { attempt, newRecord };
+  const nbAfter = newBest(activity);
+  const newlyReached = activity.trackOnly ? [] : milestoneStatus(activity).rows.filter((r) => r.reached && !before.ms.has(r.value));
+  const events = {
+    target: !before.met && metTarget(activity),
+    beatOld: !before.beaten && oldBestStatus(activity).beaten,
+    milestone: newlyReached.length ? newlyReached[newlyReached.length - 1].value : null,
+    newBest: Boolean(before.nb) && nbAfter?.attemptId === attempt.id,
+  };
+  const newRecord = Boolean(before.best) && after.attemptId === attempt.id;
+  return { attempt, newRecord, events };
 }
 
 export function updateAttempt(activity, attemptId, input) {
@@ -433,6 +459,7 @@ export function parseExerciseInput(raw) {
       unit: raw.unit === 'kg' ? 'kg' : 'lb',
       category: String(raw.category ?? '').trim(),
       notes: String(raw.notes ?? '').trim(),
+      linkedActivityId: String(raw.linkedActivityId ?? '') || null,
     },
   };
 }
@@ -461,13 +488,15 @@ export function parseSessionInput(raw) {
     sets.push({ reps, weight });
   }
   if (!sets.length) return { error: 'Add at least one set.' };
-  return { value: { date: raw.date, sets, notes: String(raw.notes ?? '').trim() } };
+  return { value: { date: raw.date, sets, notes: String(raw.notes ?? '').trim(), tags: cleanTags(raw.tags) } };
 }
 
 export function addSession(exercise, input) {
-  const session = { id: newId(), date: input.date, sets: input.sets, notes: input.notes ?? '', createdAt: Date.now() };
+  const before = bestSession(exercise);
+  const session = { id: newId(), date: input.date, sets: input.sets, notes: input.notes ?? '', tags: cleanTags(input.tags), createdAt: Date.now() };
   exercise.sessions.push(session);
-  return session;
+  const after = bestSession(exercise);
+  return { session, record: Boolean(before) && after.session.id === session.id };
 }
 
 export function updateSession(exercise, sessionId, input) {
@@ -582,6 +611,150 @@ export function exerciseTrend(exercise) {
   return { ...tr, weighted, pct, level, count: items.length };
 }
 
+// ---------- tags ----------
+
+const cleanTags = (list) => [...new Set((Array.isArray(list) ? list : []).map((t) => String(t).trim()).filter(Boolean))];
+
+export function rememberTags(data, tags) {
+  data.tags = cleanTags([...(data.tags ?? []), ...(tags ?? [])]);
+}
+
+// Which tag goes with your better results (needs two tags that each have two or more attempts).
+export function tagInsight(activity) {
+  const byTag = new Map();
+  for (const t of activity.attempts) {
+    for (const tag of t.tags ?? []) byTag.set(tag, [...(byTag.get(tag) ?? []), t.result]);
+  }
+  const rows = [...byTag].filter(([, v]) => v.length >= 2).map(([tag, v]) => ({ tag, avg: v.reduce((a, b) => a + b, 0) / v.length }));
+  if (rows.length < 2) return null;
+  rows.sort((a, b) => (activity.direction === 'lower' ? a.avg - b.avg : b.avg - a.avg));
+  return rows[0];
+}
+
+// ---------- milestones ----------
+// Smaller steps on the way to the target. They count when a new attempt reaches them.
+
+export function sortMilestones(activity, list) {
+  return [...list].sort((a, b) => (activity.direction === 'lower' ? b - a : a - b));
+}
+
+export function parseMilestones(text, unit) {
+  const out = [];
+  for (const piece of String(text ?? '').split(/[\n;,]+/)) {
+    if (!piece.trim()) continue;
+    const r = parseValue(piece, unit);
+    if (r.error) return { error: `Milestones: ${r.error}` };
+    if (r.value !== null && !out.includes(r.value)) out.push(r.value);
+  }
+  return { value: out };
+}
+
+export function milestoneStatus(activity) {
+  const list = sortMilestones(activity, activity.milestones ?? []);
+  const news = newAttempts(activity);
+  const rows = list.map((value) => ({ value, reached: news.some((t) => meetsTarget(t.result, value, activity.direction)) }));
+  const next = rows.find((r) => !r.reached) ?? null;
+  return { rows, next, reachedCount: rows.filter((r) => r.reached).length };
+}
+
+// Three evenly spaced steps between where you are and the target.
+export function suggestMilestones(activity) {
+  if (activity.target == null) return [];
+  const ref = (newBest(activity) ?? oldBest(activity))?.value;
+  if (ref == null || meetsTarget(ref, activity.target, activity.direction)) return [];
+  const out = [];
+  for (const k of [1, 2, 3]) {
+    let v = ref + ((activity.target - ref) * k) / 4;
+    v = isTimeUnit(activity.unit) ? roundToSecond(v, activity.unit) : Math.round(v * 100) / 100;
+    if (v !== ref && v !== activity.target && !out.includes(v)) out.push(v);
+  }
+  return sortMilestones(activity, out);
+}
+
+// ---------- weights ----------
+
+// Plates to load on each side of the bar, using the common plate sizes.
+export function platesPerSide(weight, unit) {
+  const kg = normalizeUnit(unit) === 'kg';
+  const bar = kg ? 20 : 45;
+  const sizes = kg ? [25, 20, 15, 10, 5, 2.5, 1.25] : [45, 35, 25, 10, 5, 2.5];
+  if (!(weight > 0)) return { bar, plates: [], leftover: 0, underBar: false };
+  if (weight < bar) return { bar, plates: [], leftover: 0, underBar: true };
+  let side = (weight - bar) / 2;
+  const plates = [];
+  for (const p of sizes) {
+    while (side >= p - 1e-9) {
+      plates.push(p);
+      side -= p;
+    }
+  }
+  return { bar, plates, leftover: Math.round(side * 100) / 100, underBar: false };
+}
+
+// ---------- dates ----------
+
+export function addDaysISO(iso, n) {
+  return new Date((dayNumber(iso) + n) * DAY_MS).toISOString().slice(0, 10);
+}
+
+export function mondayOf(iso) {
+  const dow = (new Date(`${iso}T00:00:00Z`).getUTCDay() + 6) % 7;
+  return addDaysISO(iso, -dow);
+}
+
+// ---------- records ----------
+// Every time a new best was set, newest first. Built from your attempts and sessions, so nothing extra is stored.
+
+export function recordsLog(data) {
+  const out = [];
+  for (const a of data.activities) {
+    const ob = oldBest(a);
+    let running = null;
+    let beaten = false;
+    let reached = false;
+    let first = true;
+    for (const t of sortAttempts(newAttempts(a))) {
+      const improves = !first && running && isBetter(t.result, running.result, a.direction);
+      const beatsOld = !beaten && ob && isBetter(t.result, ob.value, a.direction);
+      const hitsTarget = !reached && !a.trackOnly && a.target != null && meetsTarget(t.result, a.target, a.direction);
+      if (!running || isBetter(t.result, running.result, a.direction)) running = t;
+      first = false;
+      if (beatsOld) beaten = true;
+      if (hitsTarget) reached = true;
+      const badges = [];
+      if (beatsOld) badges.push('Beat Old Best');
+      if (hitsTarget) badges.push('Target Reached');
+      if (!badges.length && improves) badges.push('New Best');
+      if (badges.length) out.push({ kind: 'best', id: a.id, name: a.name, date: t.date, createdAt: t.createdAt ?? 0, value: t.result, unit: a.unit, badges, tags: t.tags ?? [] });
+    }
+  }
+  for (const e of data.exercises ?? []) {
+    let top = null;
+    for (const s of sortSessions(e.sessions)) {
+      const st = sessionStats(s);
+      if (top && compareTopSets(st, top) > 0) {
+        out.push({ kind: 'exercise', id: e.id, name: e.name, date: s.date, createdAt: s.createdAt ?? 0, stats: st, unit: e.unit, badges: ['New Best Top Set'], tags: s.tags ?? [] });
+      }
+      if (!top || compareTopSets(st, top) > 0) top = st;
+    }
+  }
+  return out.sort((a, b) => (a.date !== b.date ? (a.date < b.date ? 1 : -1) : b.createdAt - a.createdAt));
+}
+
+// A seven-day summary starting on a Monday.
+export function weekSummary(data, mondayISO) {
+  const start = mondayISO;
+  const end = addDaysISO(mondayISO, 6);
+  const logged = loggedDates(data);
+  const inRange = (d) => d >= start && d <= end;
+  let days = 0;
+  for (let i = 0; i < 7; i++) if (logged.has(addDaysISO(start, i))) days += 1;
+  const attempts = data.activities.reduce((n, a) => n + a.attempts.filter((t) => inRange(t.date)).length, 0);
+  const sessions = (data.exercises ?? []).reduce((n, e) => n + e.sessions.filter((x) => inRange(x.date)).length, 0);
+  const records = recordsLog(data).filter((r) => inRange(r.date));
+  return { start, end, days, attempts, sessions, records };
+}
+
 // ---------- activity heat map ----------
 
 // Every date with at least one logged attempt or exercise session.
@@ -654,6 +827,8 @@ export function normalizeData(raw) {
     trackOnly: Boolean(a.trackOnly),
     beaten: Boolean(a.beaten),
     reachedGoal: Boolean(a.reachedGoal),
+    archived: Boolean(a.archived),
+    milestones: (Array.isArray(a.milestones) ? a.milestones : []).map(Number).filter(Number.isFinite),
   }));
 
   const ideas = Array.isArray(raw.ideas)
@@ -671,6 +846,8 @@ export function normalizeData(raw) {
           unit: e.unit === 'kg' ? 'kg' : 'lb',
           notes: e.notes ?? '',
           category: typeof e.category === 'string' ? e.category : '',
+          archived: Boolean(e.archived),
+          linkedActivityId: e.linkedActivityId ?? null,
           sessions: Array.isArray(e.sessions) ? e.sessions.filter((s) => s && Array.isArray(s.sets)) : [],
         }))
     : [];
@@ -680,5 +857,10 @@ export function normalizeData(raw) {
   for (const e of exercises) if (e.category && !categories.includes(e.category)) categories.push(e.category);
   const customUnits = clean(raw.customUnits).map(normalizeUnit);
 
-  return { version: SCHEMA_VERSION, activities, ideas, exercises, categories, customUnits };
+  const tags = Array.isArray(raw.tags) ? cleanTags(raw.tags) : [...DEFAULT_TAGS];
+  for (const t of [...activities.flatMap((a) => a.attempts), ...exercises.flatMap((e) => e.sessions)].flatMap((x) => x.tags ?? [])) {
+    if (!tags.includes(t)) tags.push(t);
+  }
+
+  return { version: SCHEMA_VERSION, activities, ideas, exercises, categories, customUnits, tags };
 }
