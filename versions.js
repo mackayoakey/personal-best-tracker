@@ -1,6 +1,21 @@
 // Newest first. Add a new entry at the top each time the app changes.
 export const VERSIONS = [
   {
+    number: 'V4',
+    date: '2026-11-16',
+    title: 'Update pop-up and a friendlier look',
+    changes: [
+      'After the app updates, a pop-up shows the new version number and what changed, so you know the update worked.',
+      'Friendlier, cooler look: a warm greeting, softer cards, smoother motion, and clearer buttons.',
+      'Adding an activity and setting a goal are now separate: “New activity” creates the thing you track, and each activity has its own “Set a goal” button.',
+      'The new-activity form is split into clear steps: what you track, an optional starting record, and either a goal or track only.',
+      'Log an attempt straight from the dashboard with the button on each activity.',
+      'A fresh welcome screen that explains the three steps: add an activity, log attempts, set a goal.',
+      'Fixed the home screen icon so the flame is centred with no white border (new full-bleed icons, including a maskable one for Android).',
+      '“Version history” is now “Version History”.',
+    ],
+  },
+  {
     number: 'V3',
     date: '2026-11-16',
     title: 'Ember icon and muted warm theme',
@@ -30,7 +45,7 @@ export const VERSIONS = [
       'Track-only activities with no target.',
       'Works offline and syncs to a private GitHub repository as one JSON file.',
       'Dark mode, and no notifications.',
-      'Menu with Ideas (copy them all to paste into Claude), Version history, and Sync settings.',
+      'Menu with Ideas (copy them all to paste into Claude), Version History, and Sync settings.',
     ],
   },
   {

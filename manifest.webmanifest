@@ -5,20 +5,11 @@
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#15110f",
-  "theme_color": "#15110f",
+  "background_color": "#1e1414",
+  "theme_color": "#1e1414",
   "icons": [
-    {
-      "src": "icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any"
-    }
+    { "src": "icon-v4-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-v4-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-v4-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }

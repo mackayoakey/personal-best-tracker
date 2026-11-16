@@ -6,6 +6,7 @@ import { VERSIONS } from './versions.js';
 const CONFIG_KEY = 'pbt.config';
 const CACHE_KEY = 'pbt.cache';
 const DEFAULT_PATH = 'data/personal-bests.json';
+const SEEN_KEY = 'pbt.seenVersion';
 const SAVE_DELAY_MS = 1200;
 
 const $ = (sel) => document.querySelector(sel);
@@ -14,6 +15,7 @@ const dlg = $('#dlg');
 const menuEl = $('#menu');
 const statusEl = $('#status');
 const addBtn = $('#add-btn');
+const whatsNewEl = $('#whatsnew');
 
 // ---------- state ----------
 
@@ -210,16 +212,16 @@ function daysText(left) {
 }
 
 function targetText(a) {
-  if (a.trackOnly) return 'Track only';
-  if (a.target == null) return 'Not set';
+  if (a.trackOnly) return 'No goal';
+  if (a.target == null) return 'Not set yet';
   return fmtValue(a.target, a.unit);
 }
 
 function badges(a) {
   const items = [];
-  if (a.trackOnly) items.push('Track only');
-  if (a.beaten) items.push('Beaten');
-  if (a.reachedGoal) items.push('Goal reached');
+  if (a.trackOnly) items.push('📈 Track only');
+  if (a.beaten) items.push('🏆 Beaten');
+  if (a.reachedGoal) items.push('🎯 Goal reached');
   return items.map((t) => `<span class="badge">${t}</span>`).join('');
 }
 
@@ -227,36 +229,69 @@ function progressView(prog) {
   const pct = Math.round(prog.fraction * 100);
   return `
     <div class="progress" role="img" aria-label="${pct} percent of the way to target"><span style="width:${pct}%"></span></div>
-    <p class="sub">${prog.met ? 'Target reached' : `${pct}% of the way to target`}</p>`;
+    <p class="sub">${prog.met ? 'Target reached 🎉' : `${pct}% of the way to your target`}</p>`;
 }
 
 function trendView(tr) {
   const arrow = tr.slope === null || tr.status === 'flat' ? '→' : tr.slope > 0 ? '↗' : '↘';
   const text = {
-    none: 'Log two or more attempts to see a trend.',
+    none: 'Log two or more attempts to see your trend.',
     flat: `${arrow} Holding steady`,
-    'on-track': `${arrow} Moving the right way`,
-    'off-track': `${arrow} Moving the wrong way`,
+    'on-track': `${arrow} Heading the right way`,
+    'off-track': `${arrow} Drifting the wrong way`,
   }[tr.status];
   return `<p class="trend ${tr.status}">${text}</p>`;
 }
 
 // ---------- screens ----------
 
+function greeting() {
+  const h = new Date().getHours();
+  return h < 5 ? 'Up late' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+}
+
 function dashboardView() {
   const today = core.todayISO();
   const notice = isConfigured()
     ? ''
-    : `<div class="notice">Not connected to GitHub yet, so your data stays on this device. <button class="link" data-action="settings">Connect</button></div>`;
-  if (!state.data.activities.length) {
+    : `<div class="notice">☁️ Not connected to GitHub yet, so your data stays on this device. <button class="link" data-action="settings">Connect</button></div>`;
+  const list = state.data.activities;
+  if (!list.length) {
     return `${notice}
-      <div class="empty">
-        <p>Nothing tracked yet.</p>
-        <button class="btn primary" data-action="new-activity">Add your first activity</button>
-      </div>`;
+      <section class="welcome">
+        <div class="welcome-flame" aria-hidden="true">🔥</div>
+        <h1>Let’s track your bests</h1>
+        <p class="sub">Three easy steps. You can do them in any order.</p>
+        <ol class="steps">
+          <li><span class="step-n">1</span><div><strong>Add an activity</strong><span class="sub">Something you want to get better at, like a 5K run or max bench press.</span></div></li>
+          <li><span class="step-n">2</span><div><strong>Log your attempts</strong><span class="sub">Each time you try it, log the result. We spot new bests for you.</span></div></li>
+          <li><span class="step-n">3</span><div><strong>Set a goal</strong><span class="sub">Pick a target number to chase. It is optional, and you can change it any time.</span></div></li>
+        </ol>
+        <button class="btn primary big" data-action="new-activity">＋ Add your first activity</button>
+      </section>`;
   }
-  const hint = state.data.activities.length > 1 ? '<p class="hint">Drag ⋮⋮ to reorder.</p>' : '';
-  return `${notice}<div class="cards">${state.data.activities.map((a) => cardView(a, today)).join('')}</div>${hint}`;
+  const reached = list.filter((a) => a.reachedGoal).length;
+  const goals = list.filter((a) => !a.trackOnly && a.target != null).length;
+  const summary = `${list.length} activit${list.length === 1 ? 'y' : 'ies'}` + (goals ? ` · ${reached} of ${goals} goal${goals === 1 ? '' : 's'} reached` : '');
+  const hint = list.length > 1 ? '<p class="hint">Tip: drag ⋮⋮ to reorder your activities.</p>' : '';
+  return `${notice}
+    <section class="hero">
+      <h1>${greeting()} 👋</h1>
+      <p class="sub">${summary}</p>
+    </section>
+    <div class="cards">
+      ${list.map((a) => cardView(a, today)).join('')}
+      <button class="card-add" type="button" data-action="new-activity">
+        <span class="plus">＋</span>
+        <strong>New activity</strong>
+        <span class="sub">Something new to track</span>
+      </button>
+    </div>
+    ${hint}`;
+}
+
+function goalButtonLabel(a) {
+  return a.trackOnly || a.target == null ? '🎯 Set a goal' : '🎯 Edit goal';
 }
 
 function cardView(a, today) {
@@ -264,8 +299,9 @@ function cardView(a, today) {
   const prog = core.progress(a);
   const tr = core.trend(a);
   const left = core.goalDaysLeft(a, today);
+  const needsGoal = !a.trackOnly && a.target == null;
   return `
-    <article class="card" data-action="open" data-id="${a.id}">
+    <article class="card${a.reachedGoal ? ' reached' : ''}" data-action="open" data-id="${a.id}">
       <button class="drag-handle" type="button" aria-label="Drag to reorder ${esc(a.name)}">⋮⋮</button>
       <div class="card-body">
         <div class="card-head">
@@ -284,8 +320,12 @@ function cardView(a, today) {
             ${left !== null ? `<span class="sub">${daysText(left)}</span>` : ''}
           </div>
         </div>
-        ${prog ? progressView(prog) : ''}
+        ${prog ? progressView(prog) : needsGoal ? '<p class="sub">No goal yet. Set one to see your progress.</p>' : ''}
         ${trendView(tr)}
+        <div class="card-actions">
+          <button class="btn primary small" type="button" data-action="log" data-id="${a.id}">＋ Log attempt</button>
+          <button class="btn small${needsGoal ? ' attention' : ''}" type="button" data-action="set-goal" data-id="${a.id}">${goalButtonLabel(a)}</button>
+        </div>
       </div>
     </article>`;
 }
@@ -326,7 +366,7 @@ function detailView(a) {
         <div class="badges">${badges(a)}</div>
       </div>
       <div class="row-actions">
-        <button class="btn" data-action="edit-activity" data-id="${a.id}">Edit</button>
+        <button class="btn" data-action="edit-activity" data-id="${a.id}">✏️ Edit activity</button>
         <button class="btn danger" data-action="delete-activity" data-id="${a.id}">Delete</button>
       </div>
     </header>
@@ -346,8 +386,22 @@ function detailView(a) {
     ${prog ? progressView(prog) : ''}
     ${trendView(tr)}
 
+    <section class="panel goal-panel">
+      <div class="panel-head">
+        <h2>🎯 Goal</h2>
+        <button class="btn small" data-action="set-goal" data-id="${a.id}">${goalButtonLabel(a).replace('🎯 ', '')}</button>
+      </div>
+      <p class="sub">${
+        a.trackOnly
+          ? 'This activity is track only, so there is no target. Set a goal any time to start chasing one.'
+          : a.target == null
+            ? 'No goal yet. Pick a target number to see your progress toward it.'
+            : `Working toward ${fmtValue(a.target, a.unit)}${a.goalDate ? ` by ${fmtDate(a.goalDate)}` : ''}. You can change it any time.`
+      }</p>
+    </section>
+
     <section class="panel">
-      <h2>Log an attempt</h2>
+      <h2>＋ Log an attempt</h2>
       <form class="attempt-form" data-form="attempt-new" data-id="${a.id}">
         <label>Date<input type="date" name="date" required value="${today}"></label>
         <label>Result${a.unit ? ` (${esc(a.unit)})` : ''}<input type="number" name="result" step="any" inputmode="decimal" required></label>
@@ -357,13 +411,13 @@ function detailView(a) {
     </section>
 
     <section class="panel">
-      <h2>Trend</h2>
+      <h2>📈 Trend</h2>
       ${chartView(a, tr)}
     </section>
 
     <section class="panel">
-      <h2>History</h2>
-      ${history.length ? `<ul class="attempts">${rows}</ul>` : '<p class="sub">No attempts yet.</p>'}
+      <h2>🕘 History</h2>
+      ${history.length ? `<ul class="attempts">${rows}</ul>` : '<p class="sub">No attempts yet. Log your first one above.</p>'}
       ${a.startBest ? `<p class="sub start-line">Starting record: ${fmtValue(a.startBest.value, a.unit)} on ${fmtDate(a.startBest.date)}</p>` : ''}
     </section>`;
 }
@@ -462,7 +516,7 @@ function ideasView() {
     .join('');
   return `
     <nav class="crumbs"><a href="#/">← All activities</a></nav>
-    <h1>Ideas</h1>
+    <h1>💡 Ideas</h1>
     <p class="sub">Write ideas as they come. Copy them all when you want to take them back to Claude.</p>
     ${form}
     ${tools}
@@ -483,8 +537,8 @@ function versionsView() {
   ).join('');
   return `
     <nav class="crumbs"><a href="#/">← All activities</a></nav>
-    <h1>Version history</h1>
-    <p class="sub">Each version we have built together, newest first.</p>
+    <h1>Version History</h1>
+    <p class="sub">Every version of the app, newest first.</p>
     <div class="versions">${items}</div>`;
 }
 
@@ -517,19 +571,36 @@ function render() {
     title = 'Ideas · Personal Bests';
   } else if (route.name === 'versions') {
     html = versionsView();
-    title = 'Version history · Personal Bests';
+    title = 'Version History · Personal Bests';
   } else {
     html = dashboardView();
   }
 
   view.innerHTML = html;
   document.title = title;
-  addBtn.hidden = route.name !== 'dashboard';
+  addBtn.hidden = route.name !== 'dashboard' || !state.data.activities.length;
 }
 
 // ---------- dialogs ----------
 
 function fieldHTML(f) {
+  const html = fieldInner(f);
+  return f.when ? `<div class="when" data-when="${f.when}">${html}</div>` : html;
+}
+
+function fieldInner(f) {
+  if (f.type === 'section') {
+    return `<div class="dlg-section"><h3>${esc(f.title)}</h3>${f.note ? `<p class="sub">${esc(f.note)}</p>` : ''}</div>`;
+  }
+  if (f.type === 'segmented') {
+    const opts = f.options
+      .map(
+        ([v, l, d]) =>
+          `<label class="seg"><input type="radio" name="${f.name}" value="${v}" ${f.value === v ? 'checked' : ''}><span><strong>${esc(l)}</strong><small>${esc(d)}</small></span></label>`,
+      )
+      .join('');
+    return `<div class="segmented" role="radiogroup">${opts}</div>`;
+  }
   if (f.type === 'checkbox') {
     return `<label class="check"><input type="checkbox" name="${f.name}" ${f.value ? 'checked' : ''}> ${esc(f.label)}</label>`;
   }
@@ -567,6 +638,14 @@ function openDialog(title, fields, { submitLabel = 'Save', onSubmit, secondary, 
     </div>`;
 
   const errorEl = form.querySelector('.form-error');
+  const syncWhen = () => {
+    const mode = form.querySelector('input[name=mode]:checked')?.value;
+    form.querySelectorAll('[data-when]').forEach((el) => {
+      el.hidden = el.dataset.when !== mode;
+    });
+  };
+  form.addEventListener('change', syncWhen);
+  syncWhen();
   form.querySelector('[data-cancel]').addEventListener('click', closeDialog);
   if (secondary) {
     const btn = form.querySelector('[data-secondary]');
@@ -601,54 +680,110 @@ function closeDialog() {
 }
 
 function activityFields(a) {
+  const isNew = !a;
   return [
-    { name: 'name', label: 'Name', required: true, value: a?.name ?? '', placeholder: '100 meter sprint' },
-    { name: 'unit', label: 'Unit', value: a?.unit ?? '', placeholder: 'seconds, km, kg' },
+    { type: 'section', title: '1 · What are you tracking?', note: isNew ? 'Give it a name and say how it is measured.' : '' },
+    { name: 'name', label: 'Name', required: true, value: a?.name ?? '', placeholder: '5K run' },
+    { name: 'unit', label: 'Unit', value: a?.unit ?? '', placeholder: 'minutes, seconds, kg, km' },
     {
       name: 'direction',
       type: 'select',
-      label: 'Better when',
+      label: 'What counts as better?',
       value: a?.direction ?? 'higher',
       options: [
-        ['higher', 'A higher number is better'],
-        ['lower', 'A lower number is better'],
+        ['higher', 'A higher number (weight, distance, reps)'],
+        ['lower', 'A lower number (time, like a sprint)'],
       ],
     },
-    { name: 'trackOnly', type: 'checkbox', label: 'Track only (no target, no goal flags)', value: Boolean(a?.trackOnly) },
+    { type: 'section', title: '2 · Your starting record', note: 'Optional. The best you have done so far, so we know what to beat.' },
+    { name: 'startValue', type: 'number', label: 'Starting personal best', value: a?.startBest?.value ?? '' },
+    { name: 'startDate', type: 'date', label: 'When you set it', value: a?.startBest?.date ?? core.todayISO() },
+    { type: 'section', title: '3 · Goal', note: 'Choose now, or switch later with the Set a goal button.' },
+    {
+      name: 'mode',
+      type: 'segmented',
+      value: a?.trackOnly ? 'track' : 'goal',
+      options: [
+        ['goal', '🎯 Set a goal', 'Chase a target number'],
+        ['track', '📈 Just track it', 'Log attempts, no target'],
+      ],
+    },
     {
       name: 'target',
       type: 'number',
-      label: 'Target',
+      label: 'Target to reach',
       value: a?.target ?? '',
-      hint: 'The number you are working toward. Optional, and you can change it any time.',
+      hint: 'Optional. For example 12.49 when your best is 12.6.',
+      when: 'goal',
     },
-    { name: 'goalDate', type: 'date', label: 'Goal date', value: a?.goalDate ?? '', hint: 'Optional deadline for the target.' },
-    {
-      name: 'startValue',
-      type: 'number',
-      label: 'Starting personal best',
-      value: a?.startBest?.value ?? '',
-      hint: 'The existing record to beat. Optional.',
-    },
-    { name: 'startDate', type: 'date', label: 'Starting personal best date', value: a?.startBest?.date ?? core.todayISO() },
+    { name: 'goalDate', type: 'date', label: 'Goal date', value: a?.goalDate ?? '', hint: 'Optional deadline.', when: 'goal' },
   ];
 }
 
 function openActivityDialog(id = null) {
   const existing = id ? core.findActivity(state.data, id) : null;
   openDialog(existing ? 'Edit activity' : 'New activity', activityFields(existing), {
-    submitLabel: existing ? 'Save' : 'Create',
+    submitLabel: existing ? 'Save changes' : 'Create activity',
     onSubmit: (raw) => {
-      const { error, value } = core.parseActivityInput(raw);
+      const { error, value } = core.parseActivityInput({ ...raw, trackOnly: raw.mode === 'track' });
       if (error) return error;
       if (existing) commit((d) => core.updateActivity(core.findActivity(d, id), value));
       else {
         commit((d) => core.createActivity(d, value));
         location.hash = '#/';
+        toast('Activity added. Tap “Log attempt” to record your first result.');
       }
       return null;
     },
   });
+}
+
+function openGoalDialog(id) {
+  const a = core.findActivity(state.data, id);
+  if (!a) return;
+  const best = core.currentBest(a);
+  const hasGoal = !a.trackOnly && a.target != null;
+  openDialog(
+    hasGoal ? `Edit goal · ${a.name}` : `Set a goal · ${a.name}`,
+    [
+      {
+        name: 'target',
+        type: 'number',
+        label: `Target${a.unit ? ` (${a.unit})` : ''}`,
+        required: true,
+        value: a.trackOnly ? '' : (a.target ?? ''),
+        hint: `${a.direction === 'lower' ? 'Lower' : 'Higher'} is better.${best ? ` Your best so far is ${best.value}${a.unit ? ` ${a.unit}` : ''}.` : ''}`,
+      },
+      { name: 'goalDate', type: 'date', label: 'Goal date', value: a.trackOnly ? '' : (a.goalDate ?? ''), hint: 'Optional deadline.' },
+    ],
+    {
+      message: 'A goal is the number you are working toward. It does not change your attempts or records.',
+      submitLabel: 'Save goal',
+      secondary: hasGoal
+        ? {
+            label: 'Remove goal',
+            onClick: () => {
+              commit((d) => core.updateActivity(core.findActivity(d, id), { trackOnly: true, target: null, goalDate: null }));
+              toast('Goal removed. This activity is now track only.');
+            },
+          }
+        : null,
+      onSubmit: (raw) => {
+        const base = core.parseActivityInput({ name: a.name, trackOnly: false, target: raw.target, goalDate: raw.goalDate });
+        if (base.error) return base.error;
+        if (base.value.target === null) return 'Enter a target number.';
+        commit((d) =>
+          core.updateActivity(core.findActivity(d, id), {
+            trackOnly: false,
+            target: base.value.target,
+            goalDate: base.value.goalDate,
+          }),
+        );
+        toast('Goal saved 🎯');
+        return null;
+      },
+    },
+  );
 }
 
 function openAttemptDialog(activityId, attemptId = null) {
@@ -656,7 +791,7 @@ function openAttemptDialog(activityId, attemptId = null) {
   if (!a) return;
   const t = attemptId ? core.findAttempt(a, attemptId) : null;
   openDialog(
-    t ? 'Edit attempt' : 'Log attempt',
+    t ? 'Edit attempt' : `Log attempt · ${a.name}`,
     [
       { name: 'date', type: 'date', label: 'Date', required: true, value: t?.date ?? core.todayISO() },
       {
@@ -838,6 +973,50 @@ async function copyText(text) {
   return ok;
 }
 
+// ---------- update pop-up ----------
+
+function showWhatsNew(current, previous) {
+  whatsNewEl.innerHTML = `
+    <div class="wn">
+      <div class="wn-flame" aria-hidden="true">🔥</div>
+      <p class="wn-kicker">${previous ? `Updated from ${esc(previous)}` : 'Update complete'}</p>
+      <h2>You’re on ${esc(current.number)}</h2>
+      <p class="sub">${esc(current.title)} · ${fmtDate(current.date)}</p>
+      <ul class="wn-list">${current.changes.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>
+      <div class="dlg-actions">
+        <a class="link" href="#/versions" data-wn-history>See Version History</a>
+        <span class="grow"></span>
+        <button class="btn primary" type="button" data-wn-close>Got it</button>
+      </div>
+    </div>`;
+  if (!whatsNewEl.open) whatsNewEl.showModal();
+  whatsNewEl.scrollTop = 0;
+  whatsNewEl.querySelector('[data-wn-close]')?.focus({ preventScroll: true });
+}
+
+// Shows once per version on each device. A brand-new install just records the version quietly.
+function checkWhatsNew() {
+  const current = VERSIONS[0];
+  let seen = null;
+  try {
+    seen = localStorage.getItem(SEEN_KEY);
+  } catch {
+    /* storage unavailable */
+  }
+  if (seen === current.number) return;
+  try {
+    localStorage.setItem(SEEN_KEY, current.number);
+  } catch {
+    /* storage unavailable */
+  }
+  const existingUser = Boolean(cache || state.config);
+  if (seen || existingUser) showWhatsNew(current, seen);
+}
+
+whatsNewEl.addEventListener('click', (e) => {
+  if (e.target === whatsNewEl || e.target.closest('[data-wn-close]') || e.target.closest('[data-wn-history]')) whatsNewEl.close();
+});
+
 // ---------- toast ----------
 
 let toastTimer = null;
@@ -880,6 +1059,12 @@ function onViewClick(e) {
     case 'new-activity':
       openActivityDialog();
       break;
+    case 'log':
+      openAttemptDialog(id);
+      break;
+    case 'set-goal':
+      openGoalDialog(id);
+      break;
     case 'settings':
       openSettings();
       break;
@@ -917,7 +1102,7 @@ function onViewSubmit(e) {
       return;
     }
     const { newRecord } = commit((d) => core.addAttempt(core.findActivity(d, form.dataset.id), value));
-    toast(newRecord ? 'New personal best!' : 'Attempt logged');
+    toast(newRecord ? '🔥 New personal best!' : 'Attempt logged ✓');
   } else if (form.dataset.form === 'idea-new') {
     e.preventDefault();
     const text = String(new FormData(form).get('text') ?? '').trim();
@@ -1037,9 +1222,25 @@ window.addEventListener('pagehide', () => {
 });
 
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  const hadController = Boolean(navigator.serviceWorker.controller);
+  let reloading = false;
+  // A new version took over while the app was open: save, then reload so it runs the new code.
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloading) return;
+    reloading = true;
+    Promise.resolve(flush()).finally(() => location.reload());
+  });
+  navigator.serviceWorker
+    .register('sw.js')
+    .then((reg) => {
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) reg.update().catch(() => {});
+      });
+    })
+    .catch(() => {});
 }
 
 render();
 setStatus(isConfigured() ? 'syncing' : 'local');
 pull();
+checkWhatsNew();

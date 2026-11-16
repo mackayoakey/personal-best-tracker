@@ -1,6 +1,6 @@
 // Service worker: caches the app shell so the app opens offline.
 // GitHub API calls are cross-origin and always go straight to the network.
-const CACHE = 'pbt-v3';
+const CACHE = 'pbt-v4';
 const SHELL = [
   './',
   'index.html',
@@ -10,13 +10,19 @@ const SHELL = [
   'github.js',
   'versions.js',
   'manifest.webmanifest',
-  'icon-192.png',
-  'icon-512.png',
-  'apple-touch-icon.png',
+  'icon-v4-192.png',
+  'icon-v4-512.png',
+  'icon-v4-maskable-512.png',
+  'apple-touch-icon-v4.png',
 ];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  event.waitUntil(
+    caches
+      .open(CACHE)
+      .then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' }))))
+      .then(() => self.skipWaiting()),
+  );
 });
 
 self.addEventListener('activate', (event) => {
@@ -32,9 +38,10 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== 'GET' || url.origin !== self.location.origin) return;
 
-  // Network first so updates arrive; fall back to the cached copy when offline.
+  // Network first (skipping the browser's own HTTP cache) so updates arrive right away;
+  // fall back to the cached copy when offline.
   event.respondWith(
-    fetch(event.request)
+    fetch(event.request, { cache: 'no-cache' })
       .then((res) => {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(event.request, copy));

@@ -4,21 +4,25 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark">
-  <meta name="theme-color" content="#15110f">
+  <meta name="theme-color" content="#1e1414">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Bests">
   <title>Personal Bests</title>
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="icon" href="icon-192.png" type="image/png">
-  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="icon" href="icon-v4-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="apple-touch-icon-v4.png">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="#/">Personal Bests</a>
+    <a class="brand" href="#/" aria-label="Personal Bests home">
+      <svg class="brand-flame" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2c1.5 3 5.5 5.6 5.5 10.2A5.5 5.5 0 0 1 12 18a5.5 5.5 0 0 1-5.5-5.8c0-2 1-3.4 2-4.5.3 1.3 1 2 1.8 2.3C10 7.4 10.7 4.3 12 2z" fill="currentColor"/></svg>
+      <span>Personal Bests</span>
+    </a>
     <button id="status" class="status" type="button" data-state="idle"></button>
     <div class="top-actions">
-      <button id="add-btn" class="btn primary" type="button">+ Activity</button>
+      <button id="add-btn" class="btn primary" type="button">＋ New activity</button>
       <button id="menu-btn" class="btn ghost menu-btn" type="button" aria-label="Open menu">☰</button>
     </div>
   </header>
@@ -31,15 +35,16 @@
       <button class="btn ghost" type="button" data-close-menu aria-label="Close menu">✕</button>
     </div>
     <nav class="menu-list">
-      <a href="#/ideas">Ideas</a>
-      <a href="#/versions">Version history</a>
-      <button id="menu-settings" type="button">Sync settings</button>
-      <a href="#/">Activities</a>
+      <a href="#/">🏠 Activities</a>
+      <a href="#/ideas">💡 Ideas</a>
+      <a href="#/versions">🕘 Version History</a>
+      <button id="menu-settings" type="button">⚙️ Sync settings</button>
     </nav>
     <p class="sub menu-foot" id="menu-version"></p>
   </dialog>
 
   <dialog id="dlg"></dialog>
+  <dialog id="whatsnew" class="whatsnew" aria-label="App updated"></dialog>
   <div id="toast" class="toast" role="status" hidden></div>
 
   <script type="module" src="app.js"></script>

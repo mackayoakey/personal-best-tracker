@@ -1,4 +1,4 @@
-# Personal Bests (v1.0)
+# Personal Bests
 
 A personal progress web app for tracking personal-best goals. It is a static site with no backend. Data is saved as one JSON file in a private GitHub repository.
 
@@ -7,8 +7,8 @@ A personal progress web app for tracking personal-best goals. It is a static sit
 - `core.js`: the logic for bests, trends, progress, flags, and ideas (no DOM)
 - `github.js`: reads and writes the data file through the GitHub Contents API
 - `app.js`: the screens, menu, sync, and offline handling
-- `versions.js`: the Version history content. Add a new entry at the top for each change.
-- `sw.js`, `manifest.webmanifest`, icons: installable PWA and offline support
+- `versions.js`: the Version History content (the newest entry also powers the “app updated” pop-up). Add a new entry at the top for each change.
+- `sw.js`, `manifest.webmanifest`, `icon-v4-*.png`: installable PWA and offline support
 
 ## Setup
 1. **Create a private data repository** on GitHub, for example `personal-bests-data`. It can be empty.
@@ -18,6 +18,8 @@ A personal progress web app for tracking personal-best goals. It is a static sit
 5. **Install it** from the browser menu (on iPhone: Share → Add to Home Screen).
 
 ## Notes
+- When the app updates, a pop-up shows the new version and what changed. It appears once per version on each device.
+- To ship a new version: add an entry at the top of `versions.js`, and bump `CACHE` in `sw.js`.
 - Edits save about a second after you stop, and they are kept on the device while offline. They upload when the connection returns.
 - If two devices save at the same moment, the most recent save wins. Each save is a commit in the data repository, so older versions are in its history.
 - Changes made on one device appear on others when you open the app or return to it.
