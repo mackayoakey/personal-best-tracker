@@ -1,6 +1,15 @@
 // Newest first. Add a new entry at the top each time the app changes.
 export const VERSIONS = [
   {
+    number: 'V3',
+    date: '2026-11-16',
+    title: 'Ember icon and muted warm theme',
+    changes: [
+      'New home screen icon: the ember flame, centred.',
+      'Softer warm colour theme, with muted amber accents on a dark brown background.',
+    ],
+  },
+  {
     number: 'V2',
     date: '2026-11-16',
     title: 'Connection fix and new icon',
