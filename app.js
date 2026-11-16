@@ -234,7 +234,7 @@ function targetText(a) {
 function badges(a) {
   const items = [];
   if (a.trackOnly) items.push('📈 Track Only');
-  if (a.beaten) items.push('🏆 Beaten');
+  if (a.beaten) items.push('🏆 Old Best Beaten');
   if (a.reachedGoal) items.push('🎯 Goal Reached');
   return items.map((t) => `<span class="badge">${t}</span>`).join('');
 }
@@ -243,14 +243,14 @@ function progressView(prog, a) {
   const pct = Math.round(prog.fraction * 100);
   return `
     <div class="progress" role="img" aria-label="${pct} percent of the way to target"><span style="width:${pct}%"></span></div>
-    <p class="sub">${prog.met ? 'Target reached 🎉' : `${fmtValue(Number(prog.gap.toFixed(4)), a.unit)} to go`}</p>`;
+    <p class="sub">${prog.met ? 'Target reached 🎉' : `${fmtValue(Number(prog.gap.toFixed(4)), a.unit)} to your target`}</p>`;
 }
 
 // Shown when the target is already behind the starting record: usually "lower or higher is better" is the wrong way round.
 function directionNotice(a) {
   if (!core.targetBehindRecord(a)) return '';
   const other = a.direction === 'lower' ? 'Higher' : 'Lower';
-  return `<p class="warn-note">Your target is already behind your record, so it can’t be beaten yet. Is ${a.direction === 'lower' ? 'lower' : 'higher'} really better? <button class="link" type="button" data-action="flip-direction" data-id="${a.id}">Switch to ${other} Is Better</button></p>`;
+  return `<p class="warn-note">Your target is already behind your Old Best, so it isn’t a goal yet. Is ${a.direction === 'lower' ? 'lower' : 'higher'} really better? <button class="link" type="button" data-action="flip-direction" data-id="${a.id}">Switch to ${other} Is Better</button></p>`;
 }
 
 function paceView(a) {
@@ -290,7 +290,9 @@ function sparkline(tr, { target = null, start = null, goalDay = null } = {}) {
   if (target !== null) out.push(`<line class="sp-target" x1="${P}" x2="${W - P}" y1="${sy(target)}" y2="${sy(target)}"/>`);
   if (goalDay !== null && tr.useDays) out.push(`<line class="sp-goal" x1="${sx(goalDay)}" x2="${sx(goalDay)}" y1="${P}" y2="${H - P}"/>`);
   if (tr.slope !== null) {
-    out.push(`<line class="sp-trend" x1="${sx(xMin)}" y1="${sy(tr.intercept + tr.slope * xMin)}" x2="${sx(xMax)}" y2="${sy(tr.intercept + tr.slope * xMax)}"/>`);
+    const dMin = Math.min(...xs);
+    const dMax = Math.max(...xs);
+    out.push(`<line class="sp-trend" x1="${sx(dMin)}" y1="${sy(tr.intercept + tr.slope * dMin)}" x2="${sx(dMax)}" y2="${sy(tr.intercept + tr.slope * dMax)}"/>`);
   }
   for (const p of tr.points) out.push(`<circle class="sp-dot" cx="${sx(p.x)}" cy="${sy(p.y)}" r="3.5"/>`);
   return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Trend picture">${out.join('')}</svg>`;
@@ -398,19 +400,42 @@ function goalButtonLabel(a) {
   return a.trackOnly || a.target == null ? '🎯 Set a Goal' : '🎯 Edit Goal';
 }
 
+// Old Best, New Best, and Target side by side. Old Best is hidden when there is no old record.
+function recordStats(a, left, withDates = true) {
+  const ob = core.oldBest(a);
+  const nb = core.newBest(a);
+  const target = a.trackOnly ? 'None' : a.target == null ? '—' : fmtValueHTML(a.target, a.unit);
+  const cols = [];
+  if (ob) {
+    cols.push(`<div><span class="label">Old Best</span><span class="value">${fmtValueHTML(ob.value, a.unit)}</span><span class="sub">${fmtDate(ob.date)}</span></div>`);
+  }
+  cols.push(
+    `<div><span class="label">New Best</span><span class="value">${nb ? fmtValueHTML(nb.value, a.unit) : '—'}</span><span class="sub">${nb ? fmtDate(nb.date) : 'No attempts yet'}</span></div>`,
+  );
+  cols.push(
+    `<div><span class="label">Target</span><span class="value">${target}</span>${left !== null && withDates ? `<span class="sub">${daysText(left)}</span>` : ''}</div>`,
+  );
+  return { html: cols.join(''), three: cols.length === 3 };
+}
+
+// One line on how you are doing against the Old Best.
+function oldBestLine(a) {
+  const st = core.oldBestStatus(a);
+  if (!st.hasOld) return '';
+  if (st.beaten) return '<p class="since">🏆 You beat your Old Best.</p>';
+  if (st.gap !== null) return `<p class="since">${fmtValue(Number(st.gap.toFixed(4)), a.unit)} to beat your Old Best.</p>`;
+  return '<p class="since">Beat your Old Best with a new attempt.</p>';
+}
+
 function cardView(a, today) {
-  const best = core.currentBest(a);
-  const since = core.bestSince(a);
   const prog = core.progress(a);
   const tr = core.trend(a);
   const left = core.goalDaysLeft(a, today);
   const needsGoal = !a.trackOnly && a.target == null;
-  const sinceLine = a.startBest
-    ? `<p class="since">${since ? `Best since then: <strong>${fmtValueHTML(since.value, a.unit)}</strong> · ${fmtDate(since.date)}` : 'No attempts since your record yet.'}</p>`
-    : '';
+  const stats = recordStats(a, left);
   const spark = sparkline(tr, {
     target: a.trackOnly ? null : a.target,
-    start: a.startBest?.value ?? null,
+    start: core.oldBest(a)?.value ?? null,
     goalDay: a.goalDate && !a.trackOnly ? core.dayNumber(a.goalDate) : null,
   });
   return `
@@ -421,19 +446,8 @@ function cardView(a, today) {
           <h2>${esc(a.name)}</h2>
           <div class="badges">${badges(a)}</div>
         </div>
-        <div class="stats">
-          <div>
-            <span class="label">Personal Best</span>
-            <span class="value">${best ? fmtValueHTML(best.value, a.unit) : '—'}</span>
-            ${best ? `<span class="sub">${fmtDate(best.date)}</span>` : ''}
-          </div>
-          <div>
-            <span class="label">Target</span>
-            <span class="value">${a.trackOnly ? 'None' : a.target == null ? '—' : fmtValueHTML(a.target, a.unit)}</span>
-            ${left !== null ? `<span class="sub">${daysText(left)}</span>` : ''}
-          </div>
-        </div>
-        ${sinceLine}
+        <div class="stats${stats.three ? ' three' : ''}">${stats.html}</div>
+        ${oldBestLine(a)}
         ${directionNotice(a)}
         ${prog ? progressView(prog, a) : needsGoal ? '<p class="sub">No goal yet.</p>' : ''}
         ${spark}
@@ -453,17 +467,17 @@ function detailView(a) {
   const tr = core.trend(a);
   const left = core.goalDaysLeft(a, today);
   const history = core.sortAttempts(a.attempts).reverse();
-  const bestId = best?.attemptId;
-  const since = core.bestSince(a);
+  const oldId = core.oldBest(a)?.attemptId;
+  const newId = core.newBest(a)?.attemptId;
 
   const rows = history
     .map(
       (t) => `
-      <li class="attempt${t.id === bestId ? ' is-best' : ''}">
+      <li class="attempt${t.id === newId ? ' is-best' : ''}">
         <div class="attempt-main">
           <strong>${fmtValue(t.result, a.unit)}</strong>
           <span class="sub">${fmtDate(t.date)}</span>
-          ${t.id === bestId ? '<span class="badge">Best</span>' : ''}
+          ${t.id === newId ? '<span class="badge">New Best</span>' : ''}${t.id === oldId ? '<span class="badge">Old Best</span>' : ''}${core.isNewAttempt(t) ? '' : '<span class="sub">(before 11/15/2026)</span>'}
         </div>
         ${t.notes ? `<p class="notes">${esc(t.notes)}</p>` : ''}
         <div class="row-actions">
@@ -488,27 +502,8 @@ function detailView(a) {
       </div>
     </header>
 
-    <section class="stats big${a.startBest ? ' three' : ''}">
-      <div>
-        <span class="label">Personal Best</span>
-        <span class="value">${best ? fmtValueHTML(best.value, a.unit) : '—'}</span>
-        ${best ? `<span class="sub">${fmtDate(best.date)}${best.source === 'start' ? ' · starting record' : ''}</span>` : ''}
-      </div>
-      ${
-        a.startBest
-          ? `<div>
-        <span class="label">Best Since Then</span>
-        <span class="value">${since ? fmtValueHTML(since.value, a.unit) : '—'}</span>
-        <span class="sub">${since ? fmtDate(since.date) : 'No attempts yet'}</span>
-      </div>`
-          : ''
-      }
-      <div>
-        <span class="label">Target</span>
-        <span class="value">${a.trackOnly ? 'None' : a.target == null ? '—' : fmtValueHTML(a.target, a.unit)}</span>
-        ${left !== null ? `<span class="sub">${daysText(left)} · ${fmtDate(a.goalDate)}</span>` : ''}
-      </div>
-    </section>
+    <section class="stats big${recordStats(a, left).three ? ' three' : ''}">${recordStats(a, left).html.replace(/<span class="sub">(\d+ days? to go|Goal date is today|\d+ days? past goal date)<\/span>/, `<span class="sub">$1 · ${a.goalDate ? fmtDate(a.goalDate) : ''}</span>`)}</section>
+    ${oldBestLine(a)}
     ${directionNotice(a)}
     ${prog ? progressView(prog, a) : ''}
     ${trendView(tr)}
@@ -547,7 +542,7 @@ function detailView(a) {
     <section class="panel">
       <h2>🕘 History</h2>
       ${history.length ? `<ul class="attempts">${rows}</ul>` : '<p class="sub">No attempts yet. Log your first one above.</p>'}
-      ${a.startBest ? `<p class="sub start-line">Starting record: ${fmtValue(a.startBest.value, a.unit)} on ${fmtDate(a.startBest.date)}</p>` : ''}
+      ${a.startBest ? `<p class="sub start-line">Old Best entered: ${fmtValue(a.startBest.value, a.unit)} on ${fmtDate(a.startBest.date)}</p>` : ''}
     </section>`;
 }
 
@@ -736,7 +731,7 @@ function exerciseDetailView(e) {
     <section class="panel">
       <h2>Strength Trend</h2>
       <p class="sub">Weight and reps combine into one estimated-max number, so more weight or more reps both count as progress.</p>
-      ${chartView({ unit: tr.weighted ? e.unit : 'reps', direction: 'higher', target: null, startBest: null, trackOnly: true }, tr)}
+      ${chartView({ unit: tr.weighted ? e.unit : 'reps', direction: 'higher', target: null, startBest: null, attempts: [], trackOnly: true }, tr)}
     </section>
 
     <section class="panel">
@@ -746,7 +741,7 @@ function exerciseDetailView(e) {
 }
 
 function chartView(a, tr) {
-  if (!tr.points.length) return '<p class="sub">Log an attempt to see the trend.</p>';
+  if (!tr.points.length) return '<p class="sub">Log a new attempt to see the trend.</p>';
 
   const W = 640;
   const H = 300;
@@ -767,7 +762,8 @@ function chartView(a, tr) {
 
   const ys = tr.points.map((p) => p.y);
   if (a.target != null && !a.trackOnly) ys.push(a.target);
-  if (a.startBest) ys.push(a.startBest.value);
+  const oldRef = a.id ? core.oldBest(a) : null;
+  if (oldRef) ys.push(oldRef.value);
   let yMin = Math.min(...ys);
   let yMax = Math.max(...ys);
   const pad = (yMax - yMin) * 0.12 || Math.max(Math.abs(yMax), 1) * 0.1;
@@ -788,7 +784,7 @@ function chartView(a, tr) {
     `<line class="${cls}" x1="${L}" x2="${W - R}" y1="${sy(value)}" y2="${sy(value)}"/>` +
     `<text class="ref" x="${L + 6}" y="${sy(value) - 8}" text-anchor="start">${label} ${fmtNum(Number(value.toFixed(4)))}</text>`;
   if (a.target != null && !a.trackOnly) out.push(refLine(a.target, 'target', 'Target'));
-  if (a.startBest) out.push(refLine(a.startBest.value, 'start', 'PB'));
+  if (oldRef) out.push(refLine(oldRef.value, 'start', 'Old Best'));
 
   if (goalX !== null) {
     out.push(`<line class="goalline" x1="${sx(goalX)}" x2="${sx(goalX)}" y1="${T - 6}" y2="${H - B}"/>`);
@@ -796,9 +792,9 @@ function chartView(a, tr) {
   }
 
   if (tr.slope !== null) {
-    const y0 = tr.intercept + tr.slope * xMin;
-    const y1 = tr.intercept + tr.slope * xMax;
-    out.push(`<line class="trendline" x1="${sx(xMin)}" y1="${sy(y0)}" x2="${sx(xMax)}" y2="${sy(y1)}"/>`);
+    const dMin = Math.min(...xs);
+    const dMax = Math.max(...xs);
+    out.push(`<line class="trendline" x1="${sx(dMin)}" y1="${sy(tr.intercept + tr.slope * dMin)}" x2="${sx(dMax)}" y2="${sy(tr.intercept + tr.slope * dMax)}"/>`);
   }
 
   for (const p of tr.points) {
@@ -1150,8 +1146,8 @@ function activityFields(a) {
         ['lower', 'A lower number (time, like a sprint)'],
       ],
     },
-    { type: 'section', title: '2 · Your Starting Record', note: 'Optional. The best you have done so far, so we know what to beat.' },
-    { name: 'startValue', type: 'number', label: 'Starting Personal Best', value: a?.startBest?.value ?? '' },
+    { type: 'section', title: '2 · Your Old Best', note: 'Optional. Your best before 11/15/2026, the record you are trying to beat. Attempts you log from 11/15/2026 on count as New Bests.' },
+    { name: 'startValue', type: 'number', label: 'Old Best', value: a?.startBest?.value ?? '' },
     { name: 'startDate', type: 'date', label: 'When You Set It', value: a?.startBest?.date ?? core.todayISO() },
     { type: 'section', title: '3 · Goal', note: 'Choose now, or switch later with the Set a Goal button.' },
     {
@@ -1175,7 +1171,7 @@ function activityFields(a) {
   ];
 }
 
-const BEHIND_RECORD_MSG = 'Your target is already beaten by your starting record. Check the target, or whether a lower or higher number is better.';
+const BEHIND_RECORD_MSG = 'Your target is already beaten by your Old Best. Check the target, or whether a lower or higher number is better.';
 
 function openActivityDialog(id = null) {
   const existing = id ? core.findActivity(state.data, id) : null;
@@ -1254,7 +1250,8 @@ function openGoalDialog(id) {
         const base = core.parseActivityInput({ name: a.name, trackOnly: false, target: raw.target, goalDate: raw.goalDate });
         if (base.error) return base.error;
         if (base.value.target === null) return 'Enter a target number.';
-        if (a.startBest && core.meetsTarget(a.startBest.value, base.value.target, a.direction)) return BEHIND_RECORD_MSG;
+        const ob = core.oldBest(a);
+        if (ob && core.meetsTarget(ob.value, base.value.target, a.direction)) return BEHIND_RECORD_MSG;
         commit((d) =>
           core.updateActivity(core.findActivity(d, id), {
             trackOnly: false,

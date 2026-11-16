@@ -1,6 +1,18 @@
 // Newest first. Add a new entry at the top each time the app changes.
 export const VERSIONS = [
   {
+    number: 'V7',
+    date: '2026-11-16',
+    title: 'Old Best vs New Best',
+    changes: [
+      'Anything dated before 11/15/2026 is now your Old Best. Anything from 11/15/2026 on is a New Best.',
+      'Cards show Old Best, New Best, and Target side by side, with a line on how far you are from beating your Old Best.',
+      'The progress bar, trend picture, and pace estimate only use your new attempts, so you are measured against the target from here on.',
+      '“Old Best Beaten” and “Goal Reached” are now earned only by new attempts.',
+      'History marks which attempts are before 11/15/2026, and the starting record is now called Old Best.',
+    ],
+  },
+  {
     number: 'V6',
     date: '2026-11-16',
     title: 'Code lock, categories, and clearer cards',

@@ -3,6 +3,9 @@
 export const SCHEMA_VERSION = 1;
 const DAY_MS = 86400000;
 
+// Anything dated before this is an "Old Best". Anything on or after it is a "New Best".
+export const NEW_BESTS_START = '2026-11-15';
+
 export const DEFAULT_CATEGORIES = ['Push', 'Pull', 'Legs', 'Abs', 'Cardio'];
 
 // ---------- units ----------
@@ -174,14 +177,30 @@ function buildTrend(items, direction) {
 }
 
 export function trend(activity) {
-  const items = sortAttempts(activity.attempts).map((t) => ({ id: t.id, date: t.date, y: t.result }));
+  const items = sortAttempts(newAttempts(activity)).map((t) => ({ id: t.id, date: t.date, y: t.result }));
   return buildTrend(items, activity.direction);
 }
 
-// The best attempt logged in the app (separate from a starting record you entered).
-export function bestSince(activity) {
-  let best = null;
+export const isNewAttempt = (t) => t.date >= NEW_BESTS_START;
+export const newAttempts = (activity) => activity.attempts.filter(isNewAttempt);
+
+// The record to beat: the starting record you entered, or any earlier attempt that is better.
+export function oldBest(activity) {
+  let best = activity.startBest
+    ? { value: activity.startBest.value, date: activity.startBest.date, source: 'start', attemptId: null }
+    : null;
   for (const t of sortAttempts(activity.attempts)) {
+    if (!isNewAttempt(t) && (!best || isBetter(t.result, best.value, activity.direction))) {
+      best = { value: t.result, date: t.date, source: 'attempt', attemptId: t.id };
+    }
+  }
+  return best;
+}
+
+// The best attempt since the cutoff date.
+export function newBest(activity) {
+  let best = null;
+  for (const t of sortAttempts(newAttempts(activity))) {
     if (!best || isBetter(t.result, best.value, activity.direction)) {
       best = { value: t.result, date: t.date, attemptId: t.id };
     }
@@ -189,41 +208,50 @@ export function bestSince(activity) {
   return best;
 }
 
-// How far the current best has moved from the baseline toward the target (0 to 1).
-// The target only counts as reached when an attempt in the app reaches it.
-export function progress(activity) {
-  if (activity.trackOnly || activity.target == null) return null;
-  const best = currentBest(activity);
-  const baseline = activity.startBest?.value ?? sortAttempts(activity.attempts)[0]?.result;
-  if (!best || baseline == null) return null;
-
-  const sign = activity.direction === 'lower' ? -1 : 1;
-  const needed = sign * (activity.target - baseline);
-  const covered = sign * (best.value - baseline);
-  const met = activity.attempts.some((t) => meetsTarget(t.result, activity.target, activity.direction));
-  const fraction = needed <= 0 ? (met ? 1 : 0) : Math.min(1, Math.max(0, covered / needed));
-  const gap = met ? 0 : Math.abs(activity.target - best.value);
-  return { fraction, met, gap };
+// Where you stand against the Old Best: { hasOld, beaten, gap } (gap is null until you have a New Best).
+export function oldBestStatus(activity) {
+  const ob = oldBest(activity);
+  const nb = newBest(activity);
+  if (!ob) return { hasOld: false, beaten: false, gap: null };
+  const beaten = Boolean(nb && isBetter(nb.value, ob.value, activity.direction));
+  return { hasOld: true, beaten, gap: nb && !beaten ? Math.abs(ob.value - nb.value) : null };
 }
 
-// True when the target is already at or behind the starting record, which usually means
+// How far your New Best has moved toward the target, starting from your first new attempt (0 to 1).
+// The target only counts as reached when a new attempt reaches it.
+export function progress(activity) {
+  if (activity.trackOnly || activity.target == null) return null;
+  const news = sortAttempts(newAttempts(activity));
+  const nb = newBest(activity);
+  const ref = nb ?? oldBest(activity);
+  if (!ref) return null;
+  const baseline = news[0]?.result ?? ref.value;
+  const sign = activity.direction === 'lower' ? -1 : 1;
+  const needed = sign * (activity.target - baseline);
+  const covered = nb ? sign * (nb.value - baseline) : 0;
+  const met = news.some((t) => meetsTarget(t.result, activity.target, activity.direction));
+  const fraction = needed <= 0 ? (met ? 1 : 0) : Math.min(1, Math.max(0, covered / needed));
+  return { fraction, met, gap: met ? 0 : Math.abs(activity.target - ref.value) };
+}
+
+// True when the target is already at or behind the Old Best, which usually means
 // the "lower or higher is better" setting is the wrong way round.
 export function targetBehindRecord(activity) {
+  const ob = oldBest(activity);
   return Boolean(
-    !activity.trackOnly &&
-      activity.target != null &&
-      activity.startBest &&
-      meetsTarget(activity.startBest.value, activity.target, activity.direction) &&
-      !activity.reachedGoal,
+    !activity.trackOnly && activity.target != null && ob && meetsTarget(ob.value, activity.target, activity.direction) && !activity.reachedGoal,
   );
 }
 
 // When the trend line would cross the target, if you are on track and it is within three years.
 export function projectedDate(activity, today = todayISO()) {
   if (activity.trackOnly || activity.target == null) return null;
-  if (activity.attempts.some((t) => meetsTarget(t.result, activity.target, activity.direction))) return null;
+  if (newAttempts(activity).some((t) => meetsTarget(t.result, activity.target, activity.direction))) return null;
   const tr = trend(activity);
   if (!tr.useDays || tr.status !== 'on-track' || !tr.slope) return null;
+  // Too little data makes a pace guess meaningless: need 3+ attempts spread over 2+ weeks.
+  const days = tr.points.map((p) => p.x);
+  if (tr.points.length < 3 || Math.max(...days) - Math.min(...days) < 14) return null;
   const x = (activity.target - tr.intercept) / tr.slope;
   const now = dayNumber(today);
   if (!Number.isFinite(x) || x <= now || x - now > 1095) return null;
@@ -231,16 +259,15 @@ export function projectedDate(activity, today = todayISO()) {
 }
 
 // Flags only switch on. Track-only activities never have goal flags.
+// "Beaten" means a new attempt beat the Old Best. "Reached goal" means a new attempt reached the target.
 export function refreshFlags(activity) {
   if (activity.trackOnly) {
     activity.beaten = false;
     activity.reachedGoal = false;
     return activity;
   }
-  if (activity.startBest && activity.attempts.some((t) => isBetter(t.result, activity.startBest.value, activity.direction))) {
-    activity.beaten = true;
-  }
-  if (activity.target != null && activity.attempts.some((t) => meetsTarget(t.result, activity.target, activity.direction))) {
+  if (oldBestStatus(activity).beaten) activity.beaten = true;
+  if (activity.target != null && newAttempts(activity).some((t) => meetsTarget(t.result, activity.target, activity.direction))) {
     activity.reachedGoal = true;
   }
   return activity;
