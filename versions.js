@@ -1,7 +1,17 @@
 // Newest first. Add a new entry at the top each time the app changes.
 export const VERSIONS = [
   {
-    number: 'v1.0',
+    number: 'V2',
+    date: '2026-11-16',
+    title: 'Connection fix and new icon',
+    changes: [
+      'The dashboard now updates straight after connecting to GitHub, so the "Not connected" notice goes away.',
+      'New home screen icon: a medal.',
+      'Version shown at the bottom of the menu.',
+    ],
+  },
+  {
+    number: 'V1',
     date: '2026-11-15',
     title: 'First build',
     changes: [
@@ -15,7 +25,7 @@ export const VERSIONS = [
     ],
   },
   {
-    number: 'v0.1',
+    number: 'V0',
     date: '2026-11-15',
     title: 'Spec written',
     changes: [

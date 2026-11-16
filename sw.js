@@ -1,6 +1,6 @@
 // Service worker: caches the app shell so the app opens offline.
 // GitHub API calls are cross-origin and always go straight to the network.
-const CACHE = 'pbt-v1';
+const CACHE = 'pbt-v2';
 const SHELL = [
   './',
   'index.html',
@@ -10,7 +10,8 @@ const SHELL = [
   'github.js',
   'versions.js',
   'manifest.webmanifest',
-  'icon.svg',
+  'icon-192.png',
+  'icon-512.png',
   'apple-touch-icon.png',
 ];
 
