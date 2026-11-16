@@ -727,6 +727,7 @@ function openSettings() {
         state.config = cfg;
         writeJSON(CONFIG_KEY, cfg);
         await pull();
+        render(); // the connection changed, so refresh the dashboard notice
         return state.status === 'error' ? state.message : null;
       },
     },
