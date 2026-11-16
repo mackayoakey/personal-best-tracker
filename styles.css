@@ -407,11 +407,7 @@ dialog.dialog-host, #dlg {
 .heat { margin: 0 0 16px; padding: 14px 16px 16px; }
 .heat-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 10px; }
 .heat-head h2 { font-size: 0.95rem; }
-.heat-grid { display: grid; grid-template-columns: auto repeat(7, minmax(0, 1fr)); gap: 6px; max-width: 360px; align-items: center; }
-.heat-dow { color: var(--muted); font-size: 0.7rem; text-align: center; text-transform: uppercase; letter-spacing: 0.04em; }
-.heat-dow.we { opacity: 0.55; }
-.heat-wk { color: var(--muted); font-size: 0.7rem; padding-right: 4px; white-space: nowrap; }
-.heat-cell { aspect-ratio: 1; border-radius: 8px; background: var(--panel-2); }
+
 .heat-cell.we { background: #1f2227; }
 .heat-cell.future { background: transparent; box-shadow: inset 0 0 0 1px var(--line); opacity: 0.45; }
 .heat-cell.on { background: var(--accent); }
@@ -481,7 +477,7 @@ dialog.dialog-host, #dlg {
 .row-card:hover { border-color: #4a525e; }
 .row-main { display: grid; min-width: 0; }
 .row-main strong { overflow-wrap: anywhere; }
-.row-main .sub { white-space: nowrap; }
+.row-main .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row-side { display: grid; justify-items: end; gap: 4px; }
 .row-top { font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .row-card .plus { width: 42px; padding: 0; font-size: 1.2rem; }
@@ -522,3 +518,32 @@ dialog.dialog-host, #dlg {
 .lock-msg.ok { color: var(--accent); font-weight: 600; }
 .lock-pad.done { opacity: 0.35; pointer-events: none; }
 .menu-foot:empty { display: none; }
+
+/* v10: left-to-right heat map, no scrollbars, no sideways scroll, compact cards */
+.heat-grid { display: grid; gap: 5px; align-items: center; }
+.heat-dow { color: var(--muted); font-size: 0.7rem; text-align: center; padding-right: 4px; }
+.heat-dow.we { opacity: 0.55; }
+.heat-wk { color: var(--muted); font-size: 0.62rem; text-align: center; white-space: nowrap; }
+.heat-cell { height: 26px; border-radius: 7px; background: var(--panel-2); }
+
+html, body { overflow-x: hidden; overscroll-behavior-x: none; max-width: 100%; touch-action: pan-y; }
+.chips, .row-actions { touch-action: pan-x pan-y; }
+* { scrollbar-width: none; -ms-overflow-style: none; }
+*::-webkit-scrollbar { display: none; width: 0; height: 0; }
+
+.card.compact { padding: 12px 12px 12px 4px; border-radius: 18px; }
+.card.compact .card-head { flex-wrap: nowrap; gap: 8px; }
+.card.compact .card-head h2 { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 0; font-size: 1.05rem; }
+.card.compact .badges { flex: none; }
+.card.compact .btn.small { min-height: 32px; padding: 4px 12px; }
+.mini-stats { display: grid; gap: 8px; margin: 8px 0 6px; }
+.mini-stats.n3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.mini-stats.n2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.mini-stats .label { font-size: 0.64rem; }
+.mini-stats .value { font-size: 1.12rem; }
+.progress.thin { height: 5px; margin-top: 2px; }
+.sub.tight { margin: 5px 0 0; font-size: 0.82rem; }
+.card-trend { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.card-trend .spark { flex: 1; height: 34px; margin: 0; }
+.card-trend .pill { flex: none; margin-left: auto; font-size: 0.76rem; padding: 3px 9px; }
+.row-main .progress.thin { width: 100%; max-width: 160px; margin-top: 4px; }

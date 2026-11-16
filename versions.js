@@ -1,6 +1,17 @@
 // Newest first. Add a new entry at the top each time the app changes.
 export const VERSIONS = [
   {
+    number: 'V10',
+    date: '2026-11-16',
+    title: 'Compact cards, list view, and a steadier page',
+    changes: [
+      'The heat map now runs left to right: each column is a week, oldest on the left, with days down the side.',
+      'Bests have tile and list views, using the same two icons as Exercises.',
+      'Best cards are much more compact: one row of Old Best, New Best, and Target, a thin progress bar, one status line, and a small trend picture.',
+      'The page scrollbar is hidden, and the page no longer moves sideways.',
+    ],
+  },
+  {
     number: 'V9',
     date: '2026-11-16',
     title: 'No zoom, and a remember-me message',

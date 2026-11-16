@@ -35,6 +35,7 @@ const state = {
   suppressClick: false,
   started: false, // true once the code screen has been passed
   exView: readJSON(VIEW_KEY, 'tile'),
+  bView: readJSON('pbt.bestsView', 'tile'),
   exFilter: '',
 };
 
@@ -329,17 +330,20 @@ function heatmapView() {
   const weeks = core.heatmapWeeks(core.loggedDates(state.data), HEAT_WEEKS);
   const total = weeks.flat().filter((d) => d.logged).length;
   const dow = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
-  const head = `<span></span>${dow.map((d, i) => `<span class="heat-dow${i >= 5 ? ' we' : ''}">${d}</span>`).join('')}`;
-  const rows = weeks
-    .map((days) => {
-      const label = new Date(`${days[0].date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-      const cells = days
-        .map((d) => {
+  // Each column is a week, oldest on the left. The label is the Monday of that week.
+  const head = `<span></span>${weeks
+    .map((days) => `<span class="heat-wk">${new Date(`${days[0].date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>`)
+    .join('')}`;
+  const rows = dow
+    .map((letter, i) => {
+      const cells = weeks
+        .map((days) => {
+          const d = days[i];
           const cls = ['heat-cell', d.weekend ? 'we' : '', d.logged ? 'on' : '', d.future ? 'future' : '', d.today ? 'today' : ''].filter(Boolean).join(' ');
           return `<span class="${cls}" title="${fmtDate(d.date)}${d.logged ? ': logged' : ''}"></span>`;
         })
         .join('');
-      return `<span class="heat-wk">${label}</span>${cells}`;
+      return `<span class="heat-dow${i >= 5 ? ' we' : ''}">${letter}</span>${cells}`;
     })
     .join('');
   return `
@@ -348,7 +352,7 @@ function heatmapView() {
         <h2>Last ${HEAT_WEEKS} Weeks</h2>
         <span class="sub">${total} day${total === 1 ? '' : 's'} logged</span>
       </div>
-      <div class="heat-grid" role="img" aria-label="${total} days logged in the last ${HEAT_WEEKS} weeks">${head}${rows}</div>
+      <div class="heat-grid" style="grid-template-columns: auto repeat(${HEAT_WEEKS}, minmax(0, 1fr))" role="img" aria-label="${total} days logged in the last ${HEAT_WEEKS} weeks">${head}${rows}</div>
       <div class="heat-key"><span><i style="background:var(--accent)"></i>Logged</span><span><i style="background:var(--panel-2)"></i>Nothing</span><span><i style="background:#1f2227"></i>Weekend</span></div>
     </section>`;
 }
@@ -377,7 +381,7 @@ function dashboardView() {
   const reached = list.filter((a) => a.reachedGoal).length;
   const goals = list.filter((a) => !a.trackOnly && a.target != null).length;
   const summary = `${list.length} activit${list.length === 1 ? 'y' : 'ies'}` + (goals ? ` · ${reached} of ${goals} goal${goals === 1 ? '' : 's'} reached` : '');
-  const hint = list.length > 1 ? '<p class="hint">Tip: drag ⋮⋮ to reorder your activities.</p>' : '';
+  const hint = list.length > 1 && state.bView === 'tile' ? '<p class="hint">Tip: drag ⋮⋮ to reorder your activities.</p>' : '';
   return `${notice}
     ${tabsView('bests')}
     <section class="hero">
@@ -385,14 +389,20 @@ function dashboardView() {
       <p class="sub">${summary}</p>
     </section>
     ${heatmapView()}
-    <div class="cards">
+    <div class="toolbar"><span class="sub">Your Bests</span>${viewToggle('bests', state.bView)}</div>
+    ${
+      state.bView === 'list'
+        ? `<div class="rows">${list.map((a) => bestRow(a, today)).join('')}</div>
+           <button class="row-add" type="button" data-action="new-activity">＋ New Activity</button>`
+        : `<div class="cards">
       ${list.map((a) => cardView(a, today)).join('')}
       <button class="card-add" type="button" data-action="new-activity">
         <span class="plus">＋</span>
         <strong>New Activity</strong>
         <span class="sub">Something new to track</span>
       </button>
-    </div>
+    </div>`
+    }
     ${hint}`;
 }
 
@@ -427,36 +437,85 @@ function oldBestLine(a) {
   return '<p class="since">Beat your Old Best with a new attempt.</p>';
 }
 
+// Short label for the trend of a Best.
+function bestPill(tr) {
+  const m = { 'on-track': ['up', '↗ On Track'], 'off-track': ['down', '↘ Off Track'], flat: ['flat', '→ Holding'] }[tr.status];
+  return m ? `<span class="pill ${m[0]}">${m[1]}</span>` : '<span class="pill muted">No Trend Yet</span>';
+}
+
+// One short line: how far to the target and to the Old Best, and days left.
+function statusLine(a, prog, left) {
+  const parts = [];
+  if (prog) parts.push(prog.met ? 'Target reached 🎉' : `${fmtValue(Number(prog.gap.toFixed(4)), a.unit)} to target`);
+  const st = core.oldBestStatus(a);
+  if (st.hasOld) {
+    parts.push(st.beaten ? '🏆 Old Best beaten' : st.gap !== null ? `${fmtValue(Number(st.gap.toFixed(4)), a.unit)} to beat Old Best` : 'Beat your Old Best');
+  }
+  if (left !== null) parts.push(daysText(left));
+  return parts.join(' · ');
+}
+
+function miniStats(a) {
+  const ob = core.oldBest(a);
+  const nb = core.newBest(a);
+  const target = a.trackOnly ? 'None' : a.target == null ? '—' : fmtValueHTML(a.target, a.unit);
+  const cells = [];
+  if (ob) cells.push(`<div><span class="label">Old Best</span><span class="value">${fmtValueHTML(ob.value, a.unit)}</span></div>`);
+  cells.push(`<div><span class="label">New Best</span><span class="value">${nb ? fmtValueHTML(nb.value, a.unit) : '—'}</span></div>`);
+  cells.push(`<div><span class="label">Target</span><span class="value">${target}</span></div>`);
+  return `<div class="mini-stats n${cells.length}">${cells.join('')}</div>`;
+}
+
 function cardView(a, today) {
   const prog = core.progress(a);
   const tr = core.trend(a);
   const left = core.goalDaysLeft(a, today);
   const needsGoal = !a.trackOnly && a.target == null;
-  const stats = recordStats(a, left);
+  const pct = prog ? Math.round(prog.fraction * 100) : 0;
   const spark = sparkline(tr, {
     target: a.trackOnly ? null : a.target,
     start: core.oldBest(a)?.value ?? null,
     goalDay: a.goalDate && !a.trackOnly ? core.dayNumber(a.goalDate) : null,
   });
+  const line = needsGoal ? '' : statusLine(a, prog, left);
   return `
-    <article class="card${a.reachedGoal ? ' reached' : ''}" data-action="open" data-id="${a.id}">
+    <article class="card compact${a.reachedGoal ? ' reached' : ''}" data-action="open" data-id="${a.id}">
       <button class="drag-handle" type="button" aria-label="Drag to reorder ${esc(a.name)}">⋮⋮</button>
       <div class="card-body">
         <div class="card-head">
           <h2>${esc(a.name)}</h2>
           <div class="badges">${badges(a)}</div>
+          <button class="btn primary small" type="button" data-action="log" data-id="${a.id}">＋ Log</button>
         </div>
-        <div class="stats${stats.three ? ' three' : ''}">${stats.html}</div>
-        ${oldBestLine(a)}
+        ${miniStats(a)}
+        ${prog ? `<div class="progress thin" role="img" aria-label="${pct} percent of the way to target"><span style="width:${pct}%"></span></div>` : ''}
+        ${line ? `<p class="sub tight">${line}</p>` : ''}
+        ${needsGoal ? '<p class="sub tight">No goal yet. <button class="link" type="button" data-action="set-goal" data-id="' + a.id + '">Set a Goal</button></p>' : ''}
         ${directionNotice(a)}
-        ${prog ? progressView(prog, a) : needsGoal ? '<p class="sub">No goal yet.</p>' : ''}
-        ${spark}
-        ${trendView(tr)}
-        <div class="card-actions">
-          <button class="btn primary small" type="button" data-action="log" data-id="${a.id}">＋ Log Attempt</button>
-          <button class="btn small${needsGoal ? ' attention' : ''}" type="button" data-action="set-goal" data-id="${a.id}">${goalButtonLabel(a)}</button>
-        </div>
+        <div class="card-trend">${spark}${bestPill(tr)}</div>
       </div>
+    </article>`;
+}
+
+function bestRow(a, today) {
+  const prog = core.progress(a);
+  const tr = core.trend(a);
+  const ob = core.oldBest(a);
+  const nb = core.newBest(a);
+  const pct = prog ? Math.round(prog.fraction * 100) : 0;
+  const sub = [ob ? `Old ${fmtValue(ob.value, a.unit)}` : '', nb ? `New ${fmtValue(nb.value, a.unit)}` : 'No new attempts'].filter(Boolean).join(' · ');
+  return `
+    <article class="row-card" data-action="open" data-id="${a.id}">
+      <div class="row-main">
+        <strong>${esc(a.name)}</strong>
+        <span class="sub">${sub}</span>
+        ${prog ? `<div class="progress thin"><span style="width:${pct}%"></span></div>` : ''}
+      </div>
+      <div class="row-side">
+        <span class="row-top">${a.trackOnly ? 'Track only' : a.target == null ? 'No goal' : `🎯 ${fmtValue(a.target, a.unit)}`}</span>
+        ${bestPill(tr)}
+      </div>
+      <button class="btn primary small plus" type="button" data-action="log" data-id="${a.id}" aria-label="Log attempt for ${esc(a.name)}">＋</button>
     </article>`;
 }
 
@@ -568,6 +627,12 @@ function topSetText(st, unit) {
 const ICON_TILE = '<svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="currentColor"><rect x="2" y="2" width="7" height="7" rx="1.8"/><rect x="11" y="2" width="7" height="7" rx="1.8"/><rect x="2" y="11" width="7" height="7" rx="1.8"/><rect x="11" y="11" width="7" height="7" rx="1.8"/></svg>';
 const ICON_LIST = '<svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="currentColor"><rect x="2" y="3" width="16" height="3.4" rx="1.7"/><rect x="2" y="8.3" width="16" height="3.4" rx="1.7"/><rect x="2" y="13.6" width="16" height="3.4" rx="1.7"/></svg>';
 
+function viewToggle(scope, current) {
+  const btn = (mode, label, icon) =>
+    `<button type="button" class="${current === mode ? 'active' : ''}" data-action="set-view" data-scope="${scope}" data-mode="${mode}" aria-label="${label}" aria-pressed="${current === mode}">${icon}</button>`;
+  return `<div class="view-toggle" role="group" aria-label="Layout">${btn('tile', 'Tile view', ICON_TILE)}${btn('list', 'List view', ICON_LIST)}</div>`;
+}
+
 function topSetHTML(st, unit) {
   return st.topWeight > 0
     ? `${fmtNum(st.topWeight)}<small class="unit"> ${esc(unit)}</small> × ${fmtNum(st.topReps)}`
@@ -648,10 +713,7 @@ function exercisesView() {
         .map(([v, l]) => `<button type="button" class="chip${state.exFilter === v ? ' active' : ''}" data-action="filter" data-cat="${esc(v)}">${esc(l)}</button>`)
         .join('')}</div>`
     : '<span></span>';
-  const toggle = `<div class="view-toggle" role="group" aria-label="Layout">
-      <button type="button" class="${state.exView === 'tile' ? 'active' : ''}" data-action="set-view" data-mode="tile" aria-label="Tile view" aria-pressed="${state.exView === 'tile'}">${ICON_TILE}</button>
-      <button type="button" class="${state.exView === 'list' ? 'active' : ''}" data-action="set-view" data-mode="list" aria-label="List view" aria-pressed="${state.exView === 'list'}">${ICON_LIST}</button>
-    </div>`;
+  const toggle = viewToggle('exercises', state.exView);
 
   const body =
     state.exView === 'list'
@@ -1726,7 +1788,7 @@ function onViewClick(e) {
   if (state.suppressClick || e.target.closest('.drag-handle')) return;
   const el = e.target.closest('[data-action]');
   if (!el) return;
-  const { action, id, attempt, session, cat, mode } = el.dataset;
+  const { action, id, attempt, session, cat, mode, scope } = el.dataset;
   switch (action) {
     case 'open':
       location.hash = `#/activity/${id}`;
@@ -1760,8 +1822,13 @@ function onViewClick(e) {
       render();
       break;
     case 'set-view':
-      state.exView = mode;
-      writeJSON(VIEW_KEY, mode);
+      if (scope === 'bests') {
+        state.bView = mode;
+        writeJSON('pbt.bestsView', mode);
+      } else {
+        state.exView = mode;
+        writeJSON(VIEW_KEY, mode);
+      }
       render();
       break;
     case 'manage-categories':
