@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0e1014">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Bests">
+  <title>Personal Bests</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/">Personal Bests</a>
+    <button id="status" class="status" type="button" data-state="idle"></button>
+    <div class="top-actions">
+      <button id="add-btn" class="btn primary" type="button">+ Activity</button>
+      <button id="menu-btn" class="btn ghost menu-btn" type="button" aria-label="Open menu">☰</button>
+    </div>
+  </header>
+
+  <main id="view"></main>
+
+  <dialog id="menu" class="menu" aria-label="Menu">
+    <div class="menu-head">
+      <strong>Menu</strong>
+      <button class="btn ghost" type="button" data-close-menu aria-label="Close menu">✕</button>
+    </div>
+    <nav class="menu-list">
+      <a href="#/ideas">Ideas</a>
+      <a href="#/versions">Version history</a>
+      <button id="menu-settings" type="button">Sync settings</button>
+      <a href="#/">Activities</a>
+    </nav>
+    <p class="sub menu-foot" id="menu-version"></p>
+  </dialog>
+
+  <dialog id="dlg"></dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
