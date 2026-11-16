@@ -282,26 +282,93 @@ export function goalDaysLeft(activity, today = todayISO()) {
 const blank = (v) => v == null || (typeof v === 'string' && v.trim() === '');
 const toNumber = (v) => (blank(v) ? null : Number(v));
 
+// ---------- times and numbers ----------
+// Times are stored as a plain number in the activity's unit (6:36 in minutes is 6.6),
+// so trends and comparisons keep working. They are typed and shown as m:ss or h:mm:ss.
+
+const TIME_FACTOR = { sec: 1, min: 60, hr: 3600 };
+
+export function timeHelp(unit) {
+  const u = normalizeUnit(unit);
+  if (u === 'hr') return 'Use h:mm:ss like 2:34:36, or a decimal like 2.5.';
+  if (u === 'min') return 'Use m:ss like 6:36, or a decimal like 6.5.';
+  return 'Use seconds like 12.89, or m:ss like 1:02.5.';
+}
+
+// Turns what was typed into a number. Returns { value } (null when blank) or { error }.
+export function parseValue(raw, unit) {
+  if (blank(raw)) return { value: null };
+  const text = String(raw).trim();
+  const u = normalizeUnit(unit);
+  if (text.includes(':')) {
+    if (!isTimeUnit(u)) return { error: 'Use a plain number for this unit.' };
+    const parts = text.split(':').map((x) => x.trim());
+    const bad = parts.length > 3 || parts.some((x) => !/^\d+(\.\d+)?$/.test(x)) || parts.slice(0, -1).some((x) => x.includes('.'));
+    if (bad) return { error: timeHelp(u) };
+    const nums = parts.map(Number);
+    if (nums.slice(1).some((n) => n >= 60)) return { error: 'Minutes and seconds go up to 59.' };
+    let seconds;
+    if (nums.length === 3) seconds = nums[0] * 3600 + nums[1] * 60 + nums[2];
+    else if (u === 'hr') seconds = nums[0] * 3600 + nums[1] * 60; // h:mm
+    else seconds = nums[0] * 60 + nums[1]; // m:ss
+    return { value: Math.round((seconds / TIME_FACTOR[u]) * 1e6) / 1e6 };
+  }
+  const n = Number(text.replace(',', '.'));
+  if (!Number.isFinite(n)) return { error: isTimeUnit(u) ? timeHelp(u) : 'Enter a number.' };
+  return { value: n };
+}
+
+// How a value is shown: minutes and hours as m:ss / h:mm:ss, everything else as a plain number.
+export function formatValue(v, unit) {
+  const u = normalizeUnit(unit);
+  if (u === 'min' || u === 'hr') {
+    const total = Math.round(v * TIME_FACTOR[u] * 100) / 100;
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const sec = Math.round((total - h * 3600 - m * 60) * 100) / 100;
+    const secText = String(sec).includes('.') ? String(sec) : String(sec);
+    const ss = sec < 10 ? `0${secText}` : secText;
+    if (h > 0 || u === 'hr') return `${h}:${String(m).padStart(2, '0')}:${ss}`;
+    return `${m}:${ss}`;
+  }
+  return String(Math.round(v * 1e4) / 1e4);
+}
+
+// Rounds a time to the nearest whole second (for tidy chart labels).
+export function roundToSecond(v, unit) {
+  const f = TIME_FACTOR[normalizeUnit(unit)];
+  return f ? Math.round(v * f) / f : v;
+}
+
+// The text to put back into an input when editing.
+export function inputText(v, unit) {
+  if (v === null || v === undefined || v === '') return '';
+  return isTimeUnit(unit) ? formatValue(v, unit) : String(v);
+}
+
 export function parseActivityInput(raw) {
   const name = String(raw.name ?? '').trim();
   if (!name) return { error: 'Give the activity a name.' };
 
+  const unit = normalizeUnit(String(raw.unit ?? '').trim());
   const trackOnly = Boolean(raw.trackOnly);
-  const target = toNumber(raw.target);
-  if (!trackOnly && target !== null && !Number.isFinite(target)) return { error: 'Target must be a number.' };
+  const targetP = trackOnly ? { value: null } : parseValue(raw.target, unit);
+  if (targetP.error) return { error: `Target: ${targetP.error}` };
+  const target = targetP.value;
 
   const goalDate = blank(raw.goalDate) ? null : raw.goalDate;
   if (goalDate && !isISODate(goalDate)) return { error: 'Goal date is not valid.' };
 
-  const startValue = toNumber(raw.startValue);
-  if (startValue !== null && !Number.isFinite(startValue)) return { error: 'Starting personal best must be a number.' };
+  const startP = parseValue(raw.startValue, unit);
+  if (startP.error) return { error: `Old Best: ${startP.error}` };
+  const startValue = startP.value;
   const startDate = blank(raw.startDate) ? todayISO() : raw.startDate;
-  if (startValue !== null && !isISODate(startDate)) return { error: 'Starting personal best date is not valid.' };
+  if (startValue !== null && !isISODate(startDate)) return { error: 'Old Best date is not valid.' };
 
   return {
     value: {
       name,
-      unit: String(raw.unit ?? '').trim(),
+      unit,
       direction: raw.direction === 'lower' ? 'lower' : 'higher',
       trackOnly,
       target: trackOnly ? null : target,
@@ -311,14 +378,13 @@ export function parseActivityInput(raw) {
   };
 }
 
-export function parseAttemptInput(raw) {
+export function parseAttemptInput(raw, unit = '') {
   if (!isISODate(raw.date)) return { error: 'Pick a valid date.' };
-  const result = toNumber(raw.result);
-  if (result === null || !Number.isFinite(result)) return { error: 'Enter the result as a number.' };
-  return { value: { date: raw.date, result, notes: String(raw.notes ?? '').trim() } };
+  const r = parseValue(raw.result, unit);
+  if (r.error) return { error: r.error };
+  if (r.value === null) return { error: isTimeUnit(unit) ? `Enter the result. ${timeHelp(unit)}` : 'Enter the result as a number.' };
+  return { value: { date: raw.date, result: r.value, notes: String(raw.notes ?? '').trim() } };
 }
-
-// ---------- mutations ----------
 
 export function createActivity(data, input) {
   const activity = { id: newId(), ...input, beaten: false, reachedGoal: false, attempts: [], createdAt: Date.now() };

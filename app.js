@@ -198,9 +198,9 @@ const esc = (s) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
 const fmtNum = (v) => String(v);
-const fmtValue = (v, unit) => `${fmtNum(v)}${unit ? ` ${esc(unit)}` : ''}`;
+const fmtValue = (v, unit) => `${core.formatValue(v, unit)}${unit ? ` ${esc(unit)}` : ''}`;
 // For big numbers: the unit is smaller and lighter, and the pair never wraps.
-const fmtValueHTML = (v, unit) => `${fmtNum(v)}${unit ? `<small class="unit"> ${esc(unit)}</small>` : ''}`;
+const fmtValueHTML = (v, unit) => `${core.formatValue(v, unit)}${unit ? `<small class="unit"> ${esc(unit)}</small>` : ''}`;
 const fmtGap = (g) => fmtNum(Number(g.toFixed(4)));
 
 function fmtDate(iso) {
@@ -527,7 +527,7 @@ function detailView(a) {
       <h2>＋ Log an Attempt</h2>
       <form class="attempt-form" data-form="attempt-new" data-id="${a.id}">
         <label>Date<input type="date" name="date" required value="${today}"></label>
-        <label>Result${a.unit ? ` (${esc(a.unit)})` : ''}<input type="number" name="result" step="any" inputmode="decimal" required></label>
+        <label>Result${a.unit ? ` (${esc(a.unit)})` : ''}${valueInputHTML('result', a.unit, '', true)}${core.isTimeUnit(a.unit) ? `<small>${esc(core.timeHelp(a.unit))}</small>` : ''}</label>
         <label class="wide">Notes<textarea name="notes" rows="2" placeholder="Optional"></textarea></label>
         <button class="btn primary wide" type="submit">Log Attempt</button>
       </form>
@@ -745,7 +745,7 @@ function chartView(a, tr) {
 
   const W = 640;
   const H = 300;
-  const L = 70;
+  const L = core.isTimeUnit(a.unit) ? 96 : 70;
   const R = 30;
   const T = 34;
   const B = 52;
@@ -777,12 +777,12 @@ function chartView(a, tr) {
   for (let i = 0; i <= 3; i++) {
     const v = yMin + ((yMax - yMin) * i) / 3;
     out.push(`<line class="grid" x1="${L}" x2="${W - R}" y1="${sy(v)}" y2="${sy(v)}"/>`);
-    out.push(`<text class="axis" x="${L - 10}" y="${sy(v) + 6}" text-anchor="end">${fmtNum(Number(v.toFixed(2)))}</text>`);
+    out.push(`<text class="axis" x="${L - 10}" y="${sy(v) + 6}" text-anchor="end">${core.isTimeUnit(a.unit) ? core.formatValue(core.roundToSecond(v, a.unit), a.unit) : fmtNum(Number(v.toFixed(2)))}</text>`);
   }
 
   const refLine = (value, cls, label) =>
     `<line class="${cls}" x1="${L}" x2="${W - R}" y1="${sy(value)}" y2="${sy(value)}"/>` +
-    `<text class="ref" x="${L + 6}" y="${sy(value) - 8}" text-anchor="start">${label} ${fmtNum(Number(value.toFixed(4)))}</text>`;
+    `<text class="ref" x="${L + 6}" y="${sy(value) - 8}" text-anchor="start">${label} ${core.formatValue(value, a.unit)}</text>`;
   if (a.target != null && !a.trackOnly) out.push(refLine(a.target, 'target', 'Target'));
   if (oldRef) out.push(refLine(oldRef.value, 'start', 'Old Best'));
 
@@ -944,7 +944,32 @@ function setRowHTML(n, set = {}) {
   </div>`;
 }
 
+const valuePlaceholder = (unit) => ({ hr: 'h:mm:ss', min: 'm:ss', sec: '12.89 or m:ss' })[core.normalizeUnit(unit)] ?? '';
+
+// A text box for a result. Times (minutes, hours) can be typed like 6:36 or 2:34:36, and decimals work too.
+function valueInputHTML(name, unit, value = '', required = false) {
+  const time = core.isTimeUnit(unit);
+  return `<input type="text" name="${name}" data-value-input ${required ? 'required' : ''} inputmode="${time ? 'text' : 'decimal'}" autocomplete="off" autocapitalize="off" placeholder="${esc(valuePlaceholder(unit))}" value="${esc(value)}">`;
+}
+
+// Keeps value boxes in step with the unit drop-down (full keyboard for times, number pad otherwise).
+function applyUnitHints(form) {
+  const unit = form.querySelector('select[name=unit]')?.value ?? '';
+  const time = core.isTimeUnit(unit);
+  form.querySelectorAll('[data-value-input]').forEach((el) => {
+    el.inputMode = time ? 'text' : 'decimal';
+    el.placeholder = valuePlaceholder(unit);
+  });
+  form.querySelectorAll('.time-hint').forEach((el) => {
+    el.hidden = !time;
+    if (time) el.textContent = core.timeHelp(unit);
+  });
+}
+
 function fieldInner(f) {
+  if (f.type === 'value') {
+    return `<label>${esc(f.label)}${valueInputHTML(f.name, f.unit, f.value ?? '', f.required)}${f.hint ? `<small>${esc(f.hint)}</small>` : ''}<small class="time-hint" ${core.isTimeUnit(f.unit) ? '' : 'hidden'}>${core.isTimeUnit(f.unit) ? esc(core.timeHelp(f.unit)) : ''}</small></label>`;
+  }
   if (f.type === 'combo') {
     const opts = f.options.map(([v, l]) => `<option value="${esc(v)}" ${f.value === v ? 'selected' : ''}>${esc(l)}</option>`).join('');
     return `<div class="combo" data-combo>
@@ -1147,7 +1172,7 @@ function activityFields(a) {
       ],
     },
     { type: 'section', title: '2 · Your Old Best', note: 'Optional. Your best before 11/15/2026, the record you are trying to beat. Attempts you log from 11/15/2026 on count as New Bests.' },
-    { name: 'startValue', type: 'number', label: 'Old Best', value: a?.startBest?.value ?? '' },
+    { name: 'startValue', type: 'value', unit: a?.unit ?? '', label: 'Old Best', value: core.inputText(a?.startBest?.value, a?.unit) },
     { name: 'startDate', type: 'date', label: 'When You Set It', value: a?.startBest?.date ?? core.todayISO() },
     { type: 'section', title: '3 · Goal', note: 'Choose now, or switch later with the Set a Goal button.' },
     {
@@ -1161,9 +1186,10 @@ function activityFields(a) {
     },
     {
       name: 'target',
-      type: 'number',
+      type: 'value',
+      unit: a?.unit ?? '',
       label: 'Target to Reach',
-      value: a?.target ?? '',
+      value: core.inputText(a?.target, a?.unit),
       hint: 'Optional. For example, 185 when your best is 170.',
       when: 'goal',
     },
@@ -1201,6 +1227,10 @@ function openActivityDialog(id = null) {
     },
   });
 
+  const form = dlg.querySelector('form');
+  form.querySelector('select[name=unit]').addEventListener('change', () => applyUnitHints(form));
+  applyUnitHints(form);
+
   // For a new activity, suggest the usual direction for the unit (time is lower, weight and distance are higher).
   if (!existing) {
     const unitSel = dlg.querySelector('select[name=unit]');
@@ -1226,11 +1256,12 @@ function openGoalDialog(id) {
     [
       {
         name: 'target',
-        type: 'number',
+        type: 'value',
+        unit: a.unit,
         label: `Target${a.unit ? ` (${a.unit})` : ''}`,
         required: true,
-        value: a.trackOnly ? '' : (a.target ?? ''),
-        hint: `${a.direction === 'lower' ? 'Lower' : 'Higher'} is better.${best ? ` Your best so far is ${best.value}${a.unit ? ` ${a.unit}` : ''}.` : ''}`,
+        value: a.trackOnly ? '' : core.inputText(a.target, a.unit),
+        hint: `${a.direction === 'lower' ? 'Lower' : 'Higher'} is better.${best ? ` Your best so far is ${fmtValue(best.value, a.unit)}.` : ''}`,
       },
       { name: 'goalDate', type: 'date', label: 'Goal Date', value: a.trackOnly ? '' : (a.goalDate ?? ''), hint: 'Optional deadline.' },
     ],
@@ -1247,7 +1278,7 @@ function openGoalDialog(id) {
           }
         : null,
       onSubmit: (raw) => {
-        const base = core.parseActivityInput({ name: a.name, trackOnly: false, target: raw.target, goalDate: raw.goalDate });
+        const base = core.parseActivityInput({ name: a.name, unit: a.unit, trackOnly: false, target: raw.target, goalDate: raw.goalDate });
         if (base.error) return base.error;
         if (base.value.target === null) return 'Enter a target number.';
         const ob = core.oldBest(a);
@@ -1276,10 +1307,11 @@ function openAttemptDialog(activityId, attemptId = null) {
       { name: 'date', type: 'date', label: 'Date', required: true, value: t?.date ?? core.todayISO() },
       {
         name: 'result',
-        type: 'number',
+        type: 'value',
+        unit: a.unit,
         label: `Result${a.unit ? ` (${a.unit})` : ''}`,
         required: true,
-        value: t?.result ?? '',
+        value: core.inputText(t?.result, a.unit),
       },
       { name: 'notes', type: 'textarea', label: 'Notes', value: t?.notes ?? '' },
     ],
@@ -1287,7 +1319,7 @@ function openAttemptDialog(activityId, attemptId = null) {
       submitLabel: t ? 'Save' : 'Log Attempt',
       secondary: t ? { label: 'Delete', onClick: () => deleteAttempt(activityId, attemptId) } : null,
       onSubmit: (raw) => {
-        const { error, value } = core.parseAttemptInput(raw);
+        const { error, value } = core.parseAttemptInput(raw, a.unit);
         if (error) return error;
         commit((d) => {
           const act = core.findActivity(d, activityId);
@@ -1775,7 +1807,8 @@ function onViewSubmit(e) {
   const form = e.target;
   if (form.dataset.form === 'attempt-new') {
     e.preventDefault();
-    const { error, value } = core.parseAttemptInput(Object.fromEntries(new FormData(form)));
+    const attemptActivity = core.findActivity(state.data, form.dataset.id);
+    const { error, value } = core.parseAttemptInput(Object.fromEntries(new FormData(form)), attemptActivity?.unit);
     if (error) {
       toast(error);
       return;

@@ -1,6 +1,16 @@
 // Newest first. Add a new entry at the top each time the app changes.
 export const VERSIONS = [
   {
+    number: 'V8',
+    date: '2026-11-16',
+    title: 'Type times like 6:36',
+    changes: [
+      'Results, targets, and Old Bests in minutes can be typed as 6:36, and in hours as 2:34:36. Decimals like 6.5 still work.',
+      'Times are shown the same way (6:36 min, 2:34:36 hr) on cards, history, and charts.',
+      'The keyboard switches to a full one for time units so you can type the colon.',
+    ],
+  },
+  {
     number: 'V7',
     date: '2026-11-16',
     title: 'Old Best vs New Best',
