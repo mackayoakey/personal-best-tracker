@@ -1,6 +1,23 @@
 // Newest first. Add a new entry at the top each time the app changes.
 export const VERSIONS = [
   {
+    number: 'V6',
+    date: '2026-11-16',
+    title: 'Code lock, categories, and clearer cards',
+    changes: [
+      'Code lock: the app asks for a 4-digit code and remembers this device for 7 days. “Lock Now” is in the menu.',
+      'Exercises have categories (Push, Pull, Legs, Abs, Cardio) that you can add, rename, and change any time, with filter chips to narrow the list.',
+      'Exercises can be shown as tiles or as a compact list, using the two icons above the list.',
+      'Exercise cards are simpler and now show whether you are progressing, counting both weight and reps, with a small trend picture.',
+      'Best cards now separate your Personal Best from your Best Since Then, show how much is left to your target, and a target only counts as reached when you actually reach it in the app.',
+      'Trend pictures show a dotted line at your target and a dotted vertical line at your goal date, plus a pace estimate for when you will reach it.',
+      'Units are a drop-down list with a custom option, and your earlier entries were updated to match.',
+      'If a target is already behind your record, the app now says so and offers a one-tap fix to lower or higher is better.',
+      'New Best form has an X in the corner, and closing it with something typed in asks “Discard This Entry?” first. This applies to every form.',
+      'Buttons and titles use Title Case, and the example in the target hint was changed.',
+    ],
+  },
+  {
     number: 'V5',
     date: '2026-11-16',
     title: 'Exercises, heat map, and a calmer look',

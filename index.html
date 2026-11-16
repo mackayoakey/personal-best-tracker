@@ -22,7 +22,7 @@
     </a>
     <button id="status" class="status" type="button" data-state="idle"></button>
     <div class="top-actions">
-      <button id="add-btn" class="btn primary" type="button">＋ New activity</button>
+      <button id="add-btn" class="btn primary" type="button">＋ New Activity</button>
       <button id="menu-btn" class="btn ghost menu-btn" type="button" aria-label="Open menu">☰</button>
     </div>
   </header>
@@ -39,13 +39,15 @@
       <a href="#/exercises">Exercises</a>
       <a href="#/ideas">Ideas</a>
       <a href="#/versions">Version History</a>
-      <button id="menu-settings" type="button">Sync settings</button>
+      <button id="menu-settings" type="button">Sync Settings</button>
+      <button id="menu-lock" type="button">Lock Now</button>
     </nav>
     <p class="sub menu-foot" id="menu-version"></p>
   </dialog>
 
   <dialog id="dlg"></dialog>
   <dialog id="whatsnew" class="whatsnew" aria-label="App updated"></dialog>
+  <div id="lock" class="lock" hidden></div>
   <div id="toast" class="toast" role="status" hidden></div>
 
   <script type="module" src="app.js"></script>

@@ -3,8 +3,62 @@
 export const SCHEMA_VERSION = 1;
 const DAY_MS = 86400000;
 
+export const DEFAULT_CATEGORIES = ['Push', 'Pull', 'Legs', 'Abs', 'Cardio'];
+
+// ---------- units ----------
+
+export const BASE_UNITS = [
+  ['sec', 'Seconds'], ['min', 'Minutes'], ['hr', 'Hours'],
+  ['lb', 'Pounds'], ['kg', 'Kilograms'],
+  ['mi', 'Miles'], ['km', 'Kilometers'], ['m', 'Meters'], ['ft', 'Feet'], ['in', 'Inches'],
+  ['reps', 'Reps'],
+];
+const UNIT_ALIASES = {
+  second: 'sec', seconds: 'sec', secs: 'sec', s: 'sec',
+  minute: 'min', minutes: 'min', mins: 'min',
+  hour: 'hr', hours: 'hr', hrs: 'hr',
+  pound: 'lb', pounds: 'lb', lbs: 'lb',
+  kilogram: 'kg', kilograms: 'kg', kgs: 'kg',
+  mile: 'mi', miles: 'mi',
+  kilometer: 'km', kilometers: 'km', kilometre: 'km', kilometres: 'km',
+  meter: 'm', meters: 'm', metre: 'm', metres: 'm',
+  foot: 'ft', feet: 'ft',
+  inch: 'in', inches: 'in',
+  rep: 'reps', repetitions: 'reps',
+};
+
+// Turns "seconds" into "sec" so older entries match the unit list.
+export function normalizeUnit(unit) {
+  const t = String(unit ?? '').trim();
+  return UNIT_ALIASES[t.toLowerCase()] ?? t;
+}
+
+export function isTimeUnit(unit) {
+  return ['sec', 'min', 'hr'].includes(normalizeUnit(unit));
+}
+
+// Choices for the unit drop-down: the standard list, then custom units, then any unit already in use.
+export function unitOptions(data) {
+  const list = BASE_UNITS.map(([v, l]) => [v, `${l} (${v})`]);
+  const seen = new Set(BASE_UNITS.map(([v]) => v));
+  const extras = [...(data.customUnits ?? []), ...data.activities.map((a) => a.unit)];
+  for (const u of extras) {
+    if (u && !seen.has(u)) {
+      seen.add(u);
+      list.push([u, u]);
+    }
+  }
+  return list;
+}
+
+export function rememberUnit(data, unit) {
+  if (!unit) return;
+  if (unitOptions(data).some(([v]) => v === unit)) return;
+  data.customUnits = [...(data.customUnits ?? []), unit];
+}
+
 export function emptyData() {
-  return { version: SCHEMA_VERSION, activities: [], ideas: [], exercises: [] };
+  return { version: SCHEMA_VERSION, activities: [], ideas: [], exercises: [], categories: [...DEFAULT_CATEGORIES], customUnits: [] };
 }
 
 export function newId() {
@@ -99,7 +153,7 @@ function buildTrend(items, direction) {
     y: t.y,
     x: useDays ? dayNumber(t.date) : i,
   }));
-  if (points.length < 2) return { status: 'none', slope: null, intercept: null, points };
+  if (points.length < 2) return { status: 'none', slope: null, intercept: null, points, useDays };
 
   const n = points.length;
   const mx = points.reduce((s, p) => s + p.x, 0) / n;
@@ -116,7 +170,7 @@ function buildTrend(items, direction) {
   let status;
   if (Math.abs(slope) < 1e-9) status = 'flat';
   else status = (direction === 'lower' ? slope < 0 : slope > 0) ? 'on-track' : 'off-track';
-  return { status, slope, intercept, points };
+  return { status, slope, intercept, points, useDays };
 }
 
 export function trend(activity) {
@@ -124,7 +178,19 @@ export function trend(activity) {
   return buildTrend(items, activity.direction);
 }
 
+// The best attempt logged in the app (separate from a starting record you entered).
+export function bestSince(activity) {
+  let best = null;
+  for (const t of sortAttempts(activity.attempts)) {
+    if (!best || isBetter(t.result, best.value, activity.direction)) {
+      best = { value: t.result, date: t.date, attemptId: t.id };
+    }
+  }
+  return best;
+}
+
 // How far the current best has moved from the baseline toward the target (0 to 1).
+// The target only counts as reached when an attempt in the app reaches it.
 export function progress(activity) {
   if (activity.trackOnly || activity.target == null) return null;
   const best = currentBest(activity);
@@ -134,9 +200,34 @@ export function progress(activity) {
   const sign = activity.direction === 'lower' ? -1 : 1;
   const needed = sign * (activity.target - baseline);
   const covered = sign * (best.value - baseline);
-  const met = meetsTarget(best.value, activity.target, activity.direction);
+  const met = activity.attempts.some((t) => meetsTarget(t.result, activity.target, activity.direction));
   const fraction = needed <= 0 ? (met ? 1 : 0) : Math.min(1, Math.max(0, covered / needed));
-  return { fraction, met };
+  const gap = met ? 0 : Math.abs(activity.target - best.value);
+  return { fraction, met, gap };
+}
+
+// True when the target is already at or behind the starting record, which usually means
+// the "lower or higher is better" setting is the wrong way round.
+export function targetBehindRecord(activity) {
+  return Boolean(
+    !activity.trackOnly &&
+      activity.target != null &&
+      activity.startBest &&
+      meetsTarget(activity.startBest.value, activity.target, activity.direction) &&
+      !activity.reachedGoal,
+  );
+}
+
+// When the trend line would cross the target, if you are on track and it is within three years.
+export function projectedDate(activity, today = todayISO()) {
+  if (activity.trackOnly || activity.target == null) return null;
+  if (activity.attempts.some((t) => meetsTarget(t.result, activity.target, activity.direction))) return null;
+  const tr = trend(activity);
+  if (!tr.useDays || tr.status !== 'on-track' || !tr.slope) return null;
+  const x = (activity.target - tr.intercept) / tr.slope;
+  const now = dayNumber(today);
+  if (!Number.isFinite(x) || x <= now || x - now > 1095) return null;
+  return new Date(Math.round(x) * DAY_MS).toISOString().slice(0, 10);
 }
 
 // Flags only switch on. Track-only activities never have goal flags.
@@ -247,6 +338,7 @@ export function parseExerciseInput(raw) {
     value: {
       name,
       unit: raw.unit === 'kg' ? 'kg' : 'lb',
+      category: String(raw.category ?? '').trim(),
       notes: String(raw.notes ?? '').trim(),
     },
   };
@@ -366,14 +458,35 @@ export function sessionChange(exercise) {
   return { dir: 'same', text: 'Same as last time' };
 }
 
-// One point per session: the top weight, or the top reps for bodyweight exercises.
+// One strength number per set blends weight and reps (estimated max, Epley formula),
+// so lifting more weight or doing more reps both count as progress.
+// Bodyweight sets (no weight) simply use their reps.
+export function setScore(set) {
+  return set.weight > 0 ? set.weight * (1 + set.reps / 30) : set.reps;
+}
+
+export function sessionScore(session) {
+  return Math.max(...session.sets.map(setScore));
+}
+
+// level: 'none' | 'up' | 'down' | 'flat'. pct is the change along the trend line from first to last session.
 export function exerciseTrend(exercise) {
   const weighted = usesWeight(exercise);
-  const items = sortSessions(exercise.sessions).map((s) => {
-    const st = sessionStats(s);
-    return { id: s.id, date: s.date, y: weighted ? st.topWeight : st.topReps };
-  });
-  return { ...buildTrend(items, 'higher'), weighted };
+  const items = sortSessions(exercise.sessions).map((s) => ({
+    id: s.id,
+    date: s.date,
+    y: Math.round(sessionScore(s) * 10) / 10,
+  }));
+  const tr = buildTrend(items, 'higher');
+  let pct = null;
+  if (tr.slope !== null) {
+    const xs = tr.points.map((p) => p.x);
+    const y0 = tr.intercept + tr.slope * Math.min(...xs);
+    const y1 = tr.intercept + tr.slope * Math.max(...xs);
+    if (y0 > 0) pct = ((y1 - y0) / y0) * 100;
+  }
+  const level = pct === null ? 'none' : pct > 1 ? 'up' : pct < -1 ? 'down' : 'flat';
+  return { ...tr, weighted, pct, level, count: items.length };
 }
 
 // ---------- activity heat map ----------
@@ -439,6 +552,7 @@ export function normalizeData(raw) {
 
   const activities = raw.activities.map((a) => ({
     ...a,
+    unit: normalizeUnit(a.unit),
     direction: a.direction === 'lower' ? 'lower' : 'higher',
     attempts: Array.isArray(a.attempts) ? a.attempts : [],
     startBest: a.startBest ?? null,
@@ -463,9 +577,15 @@ export function normalizeData(raw) {
           id: e.id ?? newId(),
           unit: e.unit === 'kg' ? 'kg' : 'lb',
           notes: e.notes ?? '',
+          category: typeof e.category === 'string' ? e.category : '',
           sessions: Array.isArray(e.sessions) ? e.sessions.filter((s) => s && Array.isArray(s.sets)) : [],
         }))
     : [];
 
-  return { version: SCHEMA_VERSION, activities, ideas, exercises };
+  const clean = (list) => [...new Set((Array.isArray(list) ? list : []).map((c) => String(c).trim()).filter(Boolean))];
+  let categories = Array.isArray(raw.categories) ? clean(raw.categories) : [...DEFAULT_CATEGORIES];
+  for (const e of exercises) if (e.category && !categories.includes(e.category)) categories.push(e.category);
+  const customUnits = clean(raw.customUnits).map(normalizeUnit);
+
+  return { version: SCHEMA_VERSION, activities, ideas, exercises, categories, customUnits };
 }

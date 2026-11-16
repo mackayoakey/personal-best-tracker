@@ -2,11 +2,13 @@
 import * as core from './core.js';
 import * as gh from './github.js';
 import { VERSIONS } from './versions.js';
+import { isUnlocked, showLock, lockNow } from './lock.js';
 
 const CONFIG_KEY = 'pbt.config';
 const CACHE_KEY = 'pbt.cache';
 const DEFAULT_PATH = 'data/personal-bests.json';
 const SEEN_KEY = 'pbt.seenVersion';
+const VIEW_KEY = 'pbt.exerciseView';
 const SAVE_DELAY_MS = 1200;
 
 const $ = (sel) => document.querySelector(sel);
@@ -31,6 +33,9 @@ const state = {
   saveTimer: null,
   inFlight: null,
   suppressClick: false,
+  started: false, // true once the code screen has been passed
+  exView: readJSON(VIEW_KEY, 'tile'),
+  exFilter: '',
 };
 
 function readJSON(key, fallback) {
@@ -155,7 +160,7 @@ async function saveNow() {
 
 // Pending local edits go up. Otherwise the copy on GitHub comes down.
 async function pull() {
-  if (!isConfigured()) return;
+  if (!state.started || !isConfigured()) return;
   if (state.dirty) return flush();
   if (state.inFlight) return state.inFlight;
   if (!navigator.onLine) {
@@ -194,11 +199,20 @@ const esc = (s) =>
 
 const fmtNum = (v) => String(v);
 const fmtValue = (v, unit) => `${fmtNum(v)}${unit ? ` ${esc(unit)}` : ''}`;
+// For big numbers: the unit is smaller and lighter, and the pair never wraps.
+const fmtValueHTML = (v, unit) => `${fmtNum(v)}${unit ? `<small class="unit"> ${esc(unit)}</small>` : ''}`;
+const fmtGap = (g) => fmtNum(Number(g.toFixed(4)));
 
 function fmtDate(iso) {
   if (!iso) return '';
   const [y, m, d] = iso.split('-').map(Number);
   return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function fmtDateShort(iso) {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 function fmtDateTime(ms) {
@@ -219,23 +233,73 @@ function targetText(a) {
 
 function badges(a) {
   const items = [];
-  if (a.trackOnly) items.push('📈 Track only');
+  if (a.trackOnly) items.push('📈 Track Only');
   if (a.beaten) items.push('🏆 Beaten');
-  if (a.reachedGoal) items.push('🎯 Goal reached');
+  if (a.reachedGoal) items.push('🎯 Goal Reached');
   return items.map((t) => `<span class="badge">${t}</span>`).join('');
 }
 
-function progressView(prog) {
+function progressView(prog, a) {
   const pct = Math.round(prog.fraction * 100);
   return `
     <div class="progress" role="img" aria-label="${pct} percent of the way to target"><span style="width:${pct}%"></span></div>
-    <p class="sub">${prog.met ? 'Target reached 🎉' : `${pct}% of the way to your target`}</p>`;
+    <p class="sub">${prog.met ? 'Target reached 🎉' : `${fmtValue(Number(prog.gap.toFixed(4)), a.unit)} to go`}</p>`;
+}
+
+// Shown when the target is already behind the starting record: usually "lower or higher is better" is the wrong way round.
+function directionNotice(a) {
+  if (!core.targetBehindRecord(a)) return '';
+  const other = a.direction === 'lower' ? 'Higher' : 'Lower';
+  return `<p class="warn-note">Your target is already behind your record, so it can’t be beaten yet. Is ${a.direction === 'lower' ? 'lower' : 'higher'} really better? <button class="link" type="button" data-action="flip-direction" data-id="${a.id}">Switch to ${other} Is Better</button></p>`;
+}
+
+function paceView(a) {
+  const when = core.projectedDate(a);
+  if (!when) return '';
+  const vs = a.goalDate ? (when <= a.goalDate ? ' That is ahead of your goal date.' : ' That is behind your goal date.') : '';
+  return `<p class="trend">At this pace you reach your target around ${fmtDate(when)}.${vs}</p>`;
+}
+
+// A small trend picture: dots, a dashed trend line, a dotted line at the target, and a dotted vertical line at the goal date.
+function sparkline(tr, { target = null, start = null, goalDay = null } = {}) {
+  if (tr.points.length < 2) return '';
+  const W = 300;
+  const H = 70;
+  const P = 8;
+  const xs = tr.points.map((p) => p.x);
+  let xMin = Math.min(...xs);
+  let xMax = Math.max(...xs);
+  if (goalDay !== null && tr.useDays) xMax = Math.max(xMax, goalDay);
+  if (xMin === xMax) {
+    xMin -= 1;
+    xMax += 1;
+  }
+  const ys = tr.points.map((p) => p.y);
+  if (target !== null) ys.push(target);
+  if (start !== null) ys.push(start);
+  let yMin = Math.min(...ys);
+  let yMax = Math.max(...ys);
+  if (yMin === yMax) {
+    yMin -= 1;
+    yMax += 1;
+  }
+  const sx = (x) => P + ((x - xMin) / (xMax - xMin)) * (W - 2 * P);
+  const sy = (y) => P + (1 - (y - yMin) / (yMax - yMin)) * (H - 2 * P);
+  const out = [];
+  if (start !== null) out.push(`<line class="sp-start" x1="${P}" x2="${W - P}" y1="${sy(start)}" y2="${sy(start)}"/>`);
+  if (target !== null) out.push(`<line class="sp-target" x1="${P}" x2="${W - P}" y1="${sy(target)}" y2="${sy(target)}"/>`);
+  if (goalDay !== null && tr.useDays) out.push(`<line class="sp-goal" x1="${sx(goalDay)}" x2="${sx(goalDay)}" y1="${P}" y2="${H - P}"/>`);
+  if (tr.slope !== null) {
+    out.push(`<line class="sp-trend" x1="${sx(xMin)}" y1="${sy(tr.intercept + tr.slope * xMin)}" x2="${sx(xMax)}" y2="${sy(tr.intercept + tr.slope * xMax)}"/>`);
+  }
+  for (const p of tr.points) out.push(`<circle class="sp-dot" cx="${sx(p.x)}" cy="${sy(p.y)}" r="3.5"/>`);
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Trend picture">${out.join('')}</svg>`;
 }
 
 function trendView(tr) {
   const arrow = tr.slope === null || tr.status === 'flat' ? '→' : tr.slope > 0 ? '↗' : '↘';
   const text = {
-    none: 'Log two or more attempts to see your trend.',
+    none: 'Log 2 or more attempts to see a trend.',
     flat: `${arrow} Holding steady`,
     'on-track': `${arrow} Heading the right way`,
     'off-track': `${arrow} Drifting the wrong way`,
@@ -279,7 +343,7 @@ function heatmapView() {
   return `
     <section class="panel heat" aria-label="Activity heat map">
       <div class="heat-head">
-        <h2>Last ${HEAT_WEEKS} weeks</h2>
+        <h2>Last ${HEAT_WEEKS} Weeks</h2>
         <span class="sub">${total} day${total === 1 ? '' : 's'} logged</span>
       </div>
       <div class="heat-grid" role="img" aria-label="${total} days logged in the last ${HEAT_WEEKS} weeks">${head}${rows}</div>
@@ -298,14 +362,14 @@ function dashboardView() {
       ${tabsView('bests')}
       <section class="welcome">
         <div class="welcome-flame" aria-hidden="true">🔥</div>
-        <h1>Let’s track your bests</h1>
+        <h1>Let’s Track Your Bests</h1>
         <p class="sub">Three easy steps. You can do them in any order.</p>
         <ol class="steps">
-          <li><span class="step-n">1</span><div><strong>Add an activity</strong><span class="sub">Something you want to get better at, like a 5K run or max bench press.</span></div></li>
-          <li><span class="step-n">2</span><div><strong>Log your attempts</strong><span class="sub">Each time you try it, log the result. We spot new bests for you.</span></div></li>
-          <li><span class="step-n">3</span><div><strong>Set a goal</strong><span class="sub">Pick a target number to chase. It is optional, and you can change it any time.</span></div></li>
+          <li><span class="step-n">1</span><div><strong>Add an Activity</strong><span class="sub">Something you want to get better at, like a 5K run or max bench press.</span></div></li>
+          <li><span class="step-n">2</span><div><strong>Log Your Attempts</strong><span class="sub">Each time you try it, log the result. We spot new bests for you.</span></div></li>
+          <li><span class="step-n">3</span><div><strong>Set a Goal</strong><span class="sub">Pick a target number to chase. It is optional, and you can change it any time.</span></div></li>
         </ol>
-        <button class="btn primary big" data-action="new-activity">＋ Add your first activity</button>
+        <button class="btn primary big" data-action="new-activity">＋ Add Your First Activity</button>
       </section>`;
   }
   const reached = list.filter((a) => a.reachedGoal).length;
@@ -323,7 +387,7 @@ function dashboardView() {
       ${list.map((a) => cardView(a, today)).join('')}
       <button class="card-add" type="button" data-action="new-activity">
         <span class="plus">＋</span>
-        <strong>New activity</strong>
+        <strong>New Activity</strong>
         <span class="sub">Something new to track</span>
       </button>
     </div>
@@ -331,15 +395,24 @@ function dashboardView() {
 }
 
 function goalButtonLabel(a) {
-  return a.trackOnly || a.target == null ? '🎯 Set a goal' : '🎯 Edit goal';
+  return a.trackOnly || a.target == null ? '🎯 Set a Goal' : '🎯 Edit Goal';
 }
 
 function cardView(a, today) {
   const best = core.currentBest(a);
+  const since = core.bestSince(a);
   const prog = core.progress(a);
   const tr = core.trend(a);
   const left = core.goalDaysLeft(a, today);
   const needsGoal = !a.trackOnly && a.target == null;
+  const sinceLine = a.startBest
+    ? `<p class="since">${since ? `Best since then: <strong>${fmtValueHTML(since.value, a.unit)}</strong> · ${fmtDate(since.date)}` : 'No attempts since your record yet.'}</p>`
+    : '';
+  const spark = sparkline(tr, {
+    target: a.trackOnly ? null : a.target,
+    start: a.startBest?.value ?? null,
+    goalDay: a.goalDate && !a.trackOnly ? core.dayNumber(a.goalDate) : null,
+  });
   return `
     <article class="card${a.reachedGoal ? ' reached' : ''}" data-action="open" data-id="${a.id}">
       <button class="drag-handle" type="button" aria-label="Drag to reorder ${esc(a.name)}">⋮⋮</button>
@@ -350,20 +423,23 @@ function cardView(a, today) {
         </div>
         <div class="stats">
           <div>
-            <span class="label">Current best</span>
-            <span class="value">${best ? fmtValue(best.value, a.unit) : '—'}</span>
+            <span class="label">Personal Best</span>
+            <span class="value">${best ? fmtValueHTML(best.value, a.unit) : '—'}</span>
             ${best ? `<span class="sub">${fmtDate(best.date)}</span>` : ''}
           </div>
           <div>
             <span class="label">Target</span>
-            <span class="value">${targetText(a)}</span>
+            <span class="value">${a.trackOnly ? 'None' : a.target == null ? '—' : fmtValueHTML(a.target, a.unit)}</span>
             ${left !== null ? `<span class="sub">${daysText(left)}</span>` : ''}
           </div>
         </div>
-        ${prog ? progressView(prog) : needsGoal ? '<p class="sub">No goal yet. Set one to see your progress.</p>' : ''}
+        ${sinceLine}
+        ${directionNotice(a)}
+        ${prog ? progressView(prog, a) : needsGoal ? '<p class="sub">No goal yet.</p>' : ''}
+        ${spark}
         ${trendView(tr)}
         <div class="card-actions">
-          <button class="btn primary small" type="button" data-action="log" data-id="${a.id}">＋ Log attempt</button>
+          <button class="btn primary small" type="button" data-action="log" data-id="${a.id}">＋ Log Attempt</button>
           <button class="btn small${needsGoal ? ' attention' : ''}" type="button" data-action="set-goal" data-id="${a.id}">${goalButtonLabel(a)}</button>
         </div>
       </div>
@@ -378,6 +454,7 @@ function detailView(a) {
   const left = core.goalDaysLeft(a, today);
   const history = core.sortAttempts(a.attempts).reverse();
   const bestId = best?.attemptId;
+  const since = core.bestSince(a);
 
   const rows = history
     .map(
@@ -398,7 +475,7 @@ function detailView(a) {
     .join('');
 
   return `
-    <nav class="crumbs"><a href="#/">← All activities</a></nav>
+    <nav class="crumbs"><a href="#/">← All Activities</a></nav>
     <header class="detail-head">
       <div>
         <h1>${esc(a.name)}</h1>
@@ -406,25 +483,36 @@ function detailView(a) {
         <div class="badges">${badges(a)}</div>
       </div>
       <div class="row-actions">
-        <button class="btn" data-action="edit-activity" data-id="${a.id}">✏️ Edit activity</button>
+        <button class="btn" data-action="edit-activity" data-id="${a.id}">✏️ Edit Activity</button>
         <button class="btn danger" data-action="delete-activity" data-id="${a.id}">Delete</button>
       </div>
     </header>
 
-    <section class="stats big">
+    <section class="stats big${a.startBest ? ' three' : ''}">
       <div>
-        <span class="label">Current best</span>
-        <span class="value">${best ? fmtValue(best.value, a.unit) : '—'}</span>
+        <span class="label">Personal Best</span>
+        <span class="value">${best ? fmtValueHTML(best.value, a.unit) : '—'}</span>
         ${best ? `<span class="sub">${fmtDate(best.date)}${best.source === 'start' ? ' · starting record' : ''}</span>` : ''}
       </div>
+      ${
+        a.startBest
+          ? `<div>
+        <span class="label">Best Since Then</span>
+        <span class="value">${since ? fmtValueHTML(since.value, a.unit) : '—'}</span>
+        <span class="sub">${since ? fmtDate(since.date) : 'No attempts yet'}</span>
+      </div>`
+          : ''
+      }
       <div>
         <span class="label">Target</span>
-        <span class="value">${targetText(a)}</span>
+        <span class="value">${a.trackOnly ? 'None' : a.target == null ? '—' : fmtValueHTML(a.target, a.unit)}</span>
         ${left !== null ? `<span class="sub">${daysText(left)} · ${fmtDate(a.goalDate)}</span>` : ''}
       </div>
     </section>
-    ${prog ? progressView(prog) : ''}
+    ${directionNotice(a)}
+    ${prog ? progressView(prog, a) : ''}
     ${trendView(tr)}
+    ${paceView(a)}
 
     <section class="panel goal-panel">
       <div class="panel-head">
@@ -441,17 +529,18 @@ function detailView(a) {
     </section>
 
     <section class="panel">
-      <h2>＋ Log an attempt</h2>
+      <h2>＋ Log an Attempt</h2>
       <form class="attempt-form" data-form="attempt-new" data-id="${a.id}">
         <label>Date<input type="date" name="date" required value="${today}"></label>
         <label>Result${a.unit ? ` (${esc(a.unit)})` : ''}<input type="number" name="result" step="any" inputmode="decimal" required></label>
         <label class="wide">Notes<textarea name="notes" rows="2" placeholder="Optional"></textarea></label>
-        <button class="btn primary wide" type="submit">Log attempt</button>
+        <button class="btn primary wide" type="submit">Log Attempt</button>
       </form>
     </section>
 
     <section class="panel">
       <h2>📈 Trend</h2>
+      ${a.goalDate && !a.trackOnly ? '<p class="sub">The dotted vertical line is your goal date.</p>' : ''}
       ${chartView(a, tr)}
     </section>
 
@@ -481,59 +570,108 @@ function topSetText(st, unit) {
   return st.topWeight > 0 ? `${fmtNum(st.topWeight)} ${esc(unit)} × ${fmtNum(st.topReps)}` : `${fmtNum(st.topReps)} reps`;
 }
 
-function deltaView(change) {
-  if (!change) return '<p class="delta">Log two sessions to see how you are progressing.</p>';
-  const arrow = change.dir === 'up' ? '↗' : change.dir === 'down' ? '↘' : '→';
-  return `<p class="delta ${change.dir}">${arrow} ${esc(change.text)}</p>`;
+const ICON_TILE = '<svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="currentColor"><rect x="2" y="2" width="7" height="7" rx="1.8"/><rect x="11" y="2" width="7" height="7" rx="1.8"/><rect x="2" y="11" width="7" height="7" rx="1.8"/><rect x="11" y="11" width="7" height="7" rx="1.8"/></svg>';
+const ICON_LIST = '<svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="currentColor"><rect x="2" y="3" width="16" height="3.4" rx="1.7"/><rect x="2" y="8.3" width="16" height="3.4" rx="1.7"/><rect x="2" y="13.6" width="16" height="3.4" rx="1.7"/></svg>';
+
+function topSetHTML(st, unit) {
+  return st.topWeight > 0
+    ? `${fmtNum(st.topWeight)}<small class="unit"> ${esc(unit)}</small> × ${fmtNum(st.topReps)}`
+    : `${fmtNum(st.topReps)}<small class="unit"> reps</small>`;
+}
+
+// One short badge that says whether you are progressing, counting both weight and reps.
+function trendPill(tr) {
+  if (tr.level === 'none') return `<span class="pill muted">${tr.count < 2 ? 'Needs 2 Sessions' : 'No Trend Yet'}</span>`;
+  const [arrow, label] = { up: ['↗', 'Progressing'], flat: ['→', 'Holding'], down: ['↘', 'Slipping'] }[tr.level];
+  const pct = Math.abs(tr.pct) < 0.05 ? '' : ` ${tr.pct > 0 ? '+' : '−'}${Math.abs(tr.pct).toFixed(1)}%`;
+  return `<span class="pill ${tr.level}">${arrow} ${label}${pct}</span>`;
+}
+
+function exerciseTile(e) {
+  const last = core.lastSession(e);
+  const tr = core.exerciseTrend(e);
+  return `
+    <article class="card plain" data-action="open-exercise" data-id="${e.id}">
+      <div class="card-body">
+        <div class="card-head">
+          <h2>${esc(e.name)}</h2>
+          ${e.category ? `<span class="chip static">${esc(e.category)}</span>` : ''}
+        </div>
+        ${
+          last
+            ? `<div class="ex-main"><span class="value">${topSetHTML(core.sessionStats(last), e.unit)}</span><span class="sub">${fmtDate(last.date)} · ${e.sessions.length} session${e.sessions.length === 1 ? '' : 's'}</span></div>`
+            : '<p class="sub">No sessions yet.</p>'
+        }
+        <div class="ex-trend">${trendPill(tr)}</div>
+        ${sparkline(tr)}
+        <div class="card-actions">
+          <button class="btn primary small" type="button" data-action="log-session" data-id="${e.id}">＋ Log Session</button>
+        </div>
+      </div>
+    </article>`;
+}
+
+function exerciseRow(e) {
+  const last = core.lastSession(e);
+  const tr = core.exerciseTrend(e);
+  return `
+    <article class="row-card" data-action="open-exercise" data-id="${e.id}">
+      <div class="row-main">
+        <strong>${esc(e.name)}</strong>
+        <span class="sub">${[e.category, last ? fmtDateShort(last.date) : 'No sessions'].filter(Boolean).map(esc).join(' · ')}</span>
+      </div>
+      <div class="row-side">
+        <span class="row-top">${last ? topSetHTML(core.sessionStats(last), e.unit) : '—'}</span>
+        ${trendPill(tr)}
+      </div>
+      <button class="btn primary small plus" type="button" data-action="log-session" data-id="${e.id}" aria-label="Log session for ${esc(e.name)}">＋</button>
+    </article>`;
 }
 
 function exercisesView() {
   const list = state.data.exercises;
-  const head = `${tabsView('exercises')}`;
+  const tabs = tabsView('exercises');
   if (!list.length) {
-    return `${head}
+    return `${tabs}
       <section class="welcome">
-        <h1>Track the exercises you like</h1>
+        <h1>Track the Exercises You Like</h1>
         <p class="sub">Add an exercise, then log sets, reps, and weight whenever you do it. You will see whether you are lifting more over time.</p>
-        <p class="sub">For example: Incline smith bench, Flat dumbbell bench, Pull-ups.</p>
-        <p><button class="btn primary big" data-action="new-exercise">＋ Add your first exercise</button></p>
+        <p class="sub">For example: Incline Smith Bench, Flat Dumbbell Bench, Pull-Ups.</p>
+        <p><button class="btn primary big" data-action="new-exercise">＋ Add Your First Exercise</button></p>
       </section>`;
   }
-  const cards = list
-    .map((e) => {
-      const last = core.lastSession(e);
-      const st = last ? core.sessionStats(last) : null;
-      return `
-      <article class="card plain" data-action="open-exercise" data-id="${e.id}">
-        <div class="card-body">
-          <div class="card-head">
-            <h2>${esc(e.name)}</h2>
-            <div class="badges"><span class="badge">${e.sessions.length} session${e.sessions.length === 1 ? '' : 's'}</span></div>
-          </div>
-          ${
-            last
-              ? `<div class="stats"><div><span class="label">Top set last time</span><span class="value">${topSetText(st, e.unit)}</span><span class="sub">${fmtDate(last.date)}</span></div></div>
-                 <p class="ex-line">${setsText(last.sets, e.unit)}</p>
-                 ${deltaView(core.sessionChange(e))}`
-              : '<p class="sub">No sessions yet. Log your first one.</p>'
-          }
-          <div class="card-actions">
-            <button class="btn primary small" type="button" data-action="log-session" data-id="${e.id}">＋ Log session</button>
-          </div>
-        </div>
-      </article>`;
-    })
-    .join('');
-  return `${head}
-    ${heatmapView()}
-    <div class="cards">
-      ${cards}
-      <button class="card-add" type="button" data-action="new-exercise">
-        <span class="plus">＋</span>
-        <strong>New exercise</strong>
-        <span class="sub">Something else to track</span>
-      </button>
+
+  const cats = state.data.categories.filter((c) => list.some((e) => e.category === c));
+  const hasNone = list.some((e) => !e.category);
+  const filters = [['', 'All'], ...cats.map((c) => [c, c])];
+  if (hasNone && cats.length) filters.push(['__none__', 'Other']);
+  if (!filters.some(([v]) => v === state.exFilter)) state.exFilter = '';
+  const shown = list.filter((e) => !state.exFilter || (state.exFilter === '__none__' ? !e.category : e.category === state.exFilter));
+
+  const chips = cats.length
+    ? `<div class="chips" role="group" aria-label="Filter by category">${filters
+        .map(([v, l]) => `<button type="button" class="chip${state.exFilter === v ? ' active' : ''}" data-action="filter" data-cat="${esc(v)}">${esc(l)}</button>`)
+        .join('')}</div>`
+    : '<span></span>';
+  const toggle = `<div class="view-toggle" role="group" aria-label="Layout">
+      <button type="button" class="${state.exView === 'tile' ? 'active' : ''}" data-action="set-view" data-mode="tile" aria-label="Tile view" aria-pressed="${state.exView === 'tile'}">${ICON_TILE}</button>
+      <button type="button" class="${state.exView === 'list' ? 'active' : ''}" data-action="set-view" data-mode="list" aria-label="List view" aria-pressed="${state.exView === 'list'}">${ICON_LIST}</button>
     </div>`;
+
+  const body =
+    state.exView === 'list'
+      ? `<div class="rows">${shown.map(exerciseRow).join('')}</div>
+         <button class="row-add" type="button" data-action="new-exercise">＋ New Exercise</button>`
+      : `<div class="cards">${shown.map(exerciseTile).join('')}
+          <button class="card-add" type="button" data-action="new-exercise">
+            <span class="plus">＋</span><strong>New Exercise</strong><span class="sub">Something else to track</span>
+          </button></div>`;
+
+  return `${tabs}
+    ${heatmapView()}
+    <div class="toolbar">${chips}${toggle}</div>
+    ${body}
+    <p class="hint"><button class="link" type="button" data-action="manage-categories">Manage Categories</button></p>`;
 }
 
 function exerciseDetailView(e) {
@@ -541,7 +679,12 @@ function exerciseDetailView(e) {
   const best = core.bestSession(e);
   const last = history[0];
   const tr = core.exerciseTrend(e);
-  const chartNote = tr.weighted ? 'Top weight per session' : 'Top reps per session';
+  const verdict =
+    tr.level === 'none'
+      ? 'Log one more session to see your trend.'
+      : tr.level === 'flat'
+        ? `Holding steady across ${tr.count} sessions.`
+        : `Estimated max ${tr.level === 'up' ? 'up' : 'down'} ${Math.abs(tr.pct).toFixed(1)}% across ${tr.count} sessions.`;
 
   const rows = history
     .map(
@@ -550,7 +693,7 @@ function exerciseDetailView(e) {
         <div class="attempt-main">
           <strong class="session-sets">${setsText(s.sets, e.unit)}</strong>
           <span class="sub">${fmtDate(s.date)}</span>
-          ${best && s.id === best.session.id ? '<span class="badge">Best top set</span>' : ''}
+          ${best && s.id === best.session.id ? '<span class="badge">Best Top Set</span>' : ''}
         </div>
         ${s.notes ? `<p class="notes">${esc(s.notes)}</p>` : ''}
         <div class="row-actions">
@@ -566,39 +709,39 @@ function exerciseDetailView(e) {
     <header class="detail-head">
       <div>
         <h1>${esc(e.name)}</h1>
-        <p class="sub">Weights in ${esc(e.unit)}</p>
+        <p class="sub">${e.category ? `${esc(e.category)} · ` : ''}Weights in ${esc(e.unit)}</p>
         ${e.notes ? `<p class="ex-notes sub">${esc(e.notes)}</p>` : ''}
       </div>
       <div class="row-actions">
-        <button class="btn" data-action="edit-exercise" data-id="${e.id}">Edit exercise</button>
+        <button class="btn" data-action="edit-exercise" data-id="${e.id}">Edit Exercise</button>
         <button class="btn danger" data-action="delete-exercise" data-id="${e.id}">Delete</button>
       </div>
     </header>
 
     <section class="stats big">
       <div>
-        <span class="label">Last session</span>
-        <span class="value">${last ? topSetText(core.sessionStats(last), e.unit) : '—'}</span>
+        <span class="label">Last Session</span>
+        <span class="value">${last ? topSetHTML(core.sessionStats(last), e.unit) : '—'}</span>
         ${last ? `<span class="sub">${fmtDate(last.date)}</span>` : ''}
       </div>
       <div>
-        <span class="label">Best top set</span>
-        <span class="value">${best ? topSetText(best.stats, e.unit) : '—'}</span>
+        <span class="label">Best Top Set</span>
+        <span class="value">${best ? topSetHTML(best.stats, e.unit) : '—'}</span>
         ${best ? `<span class="sub">${fmtDate(best.session.date)}</span>` : ''}
       </div>
     </section>
-    ${deltaView(core.sessionChange(e))}
-    <p><button class="btn primary big" data-action="log-session" data-id="${e.id}">＋ Log session</button></p>
+    <p class="ex-trend">${trendPill(tr)} <span class="sub">${verdict}</span></p>
+    <p><button class="btn primary big" data-action="log-session" data-id="${e.id}">＋ Log Session</button></p>
 
     <section class="panel">
-      <h2>Trend</h2>
-      <p class="sub">${chartNote}</p>
+      <h2>Strength Trend</h2>
+      <p class="sub">Weight and reps combine into one estimated-max number, so more weight or more reps both count as progress.</p>
       ${chartView({ unit: tr.weighted ? e.unit : 'reps', direction: 'higher', target: null, startBest: null, trackOnly: true }, tr)}
     </section>
 
     <section class="panel">
       <h2>History</h2>
-      ${history.length ? `<ul class="attempts">${rows}</ul>` : '<p class="sub">No sessions yet. Tap “Log session” to add your first.</p>'}
+      ${history.length ? `<ul class="attempts">${rows}</ul>` : '<p class="sub">No sessions yet. Tap “Log Session” to add your first.</p>'}
     </section>`;
 }
 
@@ -609,12 +752,14 @@ function chartView(a, tr) {
   const H = 300;
   const L = 70;
   const R = 30;
-  const T = 30;
+  const T = 34;
   const B = 52;
 
   const xs = tr.points.map((p) => p.x);
   let xMin = Math.min(...xs);
   let xMax = Math.max(...xs);
+  const goalX = a.goalDate && !a.trackOnly && tr.useDays ? core.dayNumber(a.goalDate) : null;
+  if (goalX !== null) xMax = Math.max(xMax, goalX);
   if (xMin === xMax) {
     xMin -= 1;
     xMax += 1;
@@ -641,9 +786,14 @@ function chartView(a, tr) {
 
   const refLine = (value, cls, label) =>
     `<line class="${cls}" x1="${L}" x2="${W - R}" y1="${sy(value)}" y2="${sy(value)}"/>` +
-    `<text class="ref" x="${W - R}" y="${sy(value) - 8}" text-anchor="end">${label} ${fmtNum(value)}</text>`;
+    `<text class="ref" x="${L + 6}" y="${sy(value) - 8}" text-anchor="start">${label} ${fmtNum(Number(value.toFixed(4)))}</text>`;
   if (a.target != null && !a.trackOnly) out.push(refLine(a.target, 'target', 'Target'));
-  if (a.startBest) out.push(refLine(a.startBest.value, 'start', 'Start'));
+  if (a.startBest) out.push(refLine(a.startBest.value, 'start', 'PB'));
+
+  if (goalX !== null) {
+    out.push(`<line class="goalline" x1="${sx(goalX)}" x2="${sx(goalX)}" y1="${T - 6}" y2="${H - B}"/>`);
+    out.push(`<text class="ref" x="${sx(goalX)}" y="${T - 12}" text-anchor="end">Goal date</text>`);
+  }
 
   if (tr.slope !== null) {
     const y0 = tr.intercept + tr.slope * xMin;
@@ -660,7 +810,8 @@ function chartView(a, tr) {
   const first = tr.points[0];
   const last = tr.points[tr.points.length - 1];
   out.push(`<text class="axis" x="${L}" y="${H - 14}" text-anchor="start">${fmtDate(first.date)}</text>`);
-  if (last !== first) out.push(`<text class="axis" x="${W - R}" y="${H - 14}" text-anchor="end">${fmtDate(last.date)}</text>`);
+  if (goalX !== null) out.push(`<text class="axis" x="${W - R}" y="${H - 14}" text-anchor="end">${fmtDate(a.goalDate)}</text>`);
+  else if (last.date !== first.date) out.push(`<text class="axis" x="${W - R}" y="${H - 14}" text-anchor="end">${fmtDate(last.date)}</text>`);
 
   return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Attempt trend chart">${out.join('')}</svg>`;
 }
@@ -672,14 +823,14 @@ function ideasView() {
     <form class="idea-form" data-form="idea-new">
       <label class="sr-only" for="idea-text">New idea</label>
       <textarea id="idea-text" name="text" rows="3" placeholder="Write an idea…"></textarea>
-      <button class="btn primary" type="submit">Add idea</button>
+      <button class="btn primary" type="submit">Add Idea</button>
     </form>`;
   const tools = count
     ? `<div class="idea-tools">
          <span class="sub">${count} idea${count === 1 ? '' : 's'}, newest first</span>
          <span class="grow"></span>
-         <button class="btn" data-action="copy-ideas">Copy all</button>
-         <button class="btn danger" data-action="delete-all-ideas">Delete all</button>
+         <button class="btn" data-action="copy-ideas">Copy All</button>
+         <button class="btn danger" data-action="delete-all-ideas">Delete All</button>
        </div>`
     : '';
   const items = list
@@ -695,7 +846,7 @@ function ideasView() {
     )
     .join('');
   return `
-    <nav class="crumbs"><a href="#/">← All activities</a></nav>
+    <nav class="crumbs"><a href="#/">← All Activities</a></nav>
     <h1>💡 Ideas</h1>
     <p class="sub">Write ideas as they come. Copy them all when you want to take them back to Claude.</p>
     ${form}
@@ -715,7 +866,7 @@ function versionsView() {
       </details>`,
   ).join('');
   return `
-    <nav class="crumbs"><a href="#/">← All activities</a></nav>
+    <nav class="crumbs"><a href="#/">← All Activities</a></nav>
     <h1>Version History</h1>
     <p class="sub">Every version of the app, newest first.</p>
     <div class="versions">${items}</div>`;
@@ -736,6 +887,7 @@ function parseRoute() {
 }
 
 function render() {
+  if (!state.started) return;
   const route = parseRoute();
   let html;
   let title = 'Personal Bests';
@@ -772,10 +924,10 @@ function render() {
   view.innerHTML = html;
   document.title = title;
   if (route.name === 'exercises') {
-    addBtn.textContent = '＋ New exercise';
+    addBtn.textContent = '＋ New Exercise';
     addBtn.hidden = !state.data.exercises.length;
   } else {
-    addBtn.textContent = '＋ New activity';
+    addBtn.textContent = '＋ New Activity';
     addBtn.hidden = route.name !== 'dashboard' || !state.data.activities.length;
   }
 }
@@ -797,12 +949,19 @@ function setRowHTML(n, set = {}) {
 }
 
 function fieldInner(f) {
+  if (f.type === 'combo') {
+    const opts = f.options.map(([v, l]) => `<option value="${esc(v)}" ${f.value === v ? 'selected' : ''}>${esc(l)}</option>`).join('');
+    return `<div class="combo" data-combo>
+      <label>${esc(f.label)}<select name="${f.name}">${opts}<option value="__custom__">${esc(f.customLabel ?? 'Add Custom…')}</option></select></label>
+      <label class="combo-custom" hidden>${esc(f.customFieldLabel ?? 'Custom')}<input type="text" name="${f.name}__custom" autocomplete="off" placeholder="${esc(f.placeholder ?? '')}"></label>
+    </div>`;
+  }
   if (f.type === 'sets') {
     const rows = f.value.map((s, i) => setRowHTML(i + 1, s)).join('');
     return `<div class="sets" data-sets>
       <div class="sets-head"><span>Set</span><span>Weight (${esc(f.unit)})</span><span>Reps</span><span></span></div>
       <div data-sets-list style="display:grid;gap:8px">${rows}</div>
-      <button type="button" class="btn small" data-add-set>＋ Add set</button>
+      <button type="button" class="btn small" data-add-set>＋ Add Set</button>
       <small>Leave weight empty for bodyweight exercises.</small>
     </div>`;
   }
@@ -839,11 +998,16 @@ function fieldInner(f) {
   return `<label>${esc(f.label)}<input ${attrs} value="${esc(f.value ?? '')}">${f.hint ? `<small>${esc(f.hint)}</small>` : ''}</label>`;
 }
 
+// The value of a drop-down that also lets you type a new choice.
+function comboValue(raw, name) {
+  return raw[name] === '__custom__' ? String(raw[`${name}__custom`] ?? '').trim() : String(raw[name] ?? '').trim();
+}
+
 function openDialog(title, fields, { submitLabel = 'Save', onSubmit, secondary, message } = {}) {
   const form = document.createElement('form');
   form.className = 'dlg-form';
   form.innerHTML = `
-    <h2>${esc(title)}</h2>
+    <div class="dlg-top"><h2>${esc(title)}</h2><button type="button" class="dlg-x" data-x aria-label="Close">✕</button></div>
     ${message ? `<p class="sub">${esc(message)}</p>` : ''}
     ${fields.map(fieldHTML).join('')}
     <p class="form-error" role="alert"></p>
@@ -852,6 +1016,11 @@ function openDialog(title, fields, { submitLabel = 'Save', onSubmit, secondary, 
       <span class="grow"></span>
       <button type="button" class="btn ghost" data-cancel>Cancel</button>
       <button type="submit" class="btn primary">${esc(submitLabel)}</button>
+    </div>
+    <div class="discard" hidden role="alertdialog" aria-label="Discard changes?">
+      <strong>Discard This Entry?</strong>
+      <span class="sub">What you entered won’t be saved.</span>
+      <div class="dlg-actions"><button type="button" class="btn" data-keep>Keep Editing</button><button type="button" class="btn danger" data-discard>Discard</button></div>
     </div>`;
 
   const errorEl = form.querySelector('.form-error');
@@ -861,7 +1030,16 @@ function openDialog(title, fields, { submitLabel = 'Save', onSubmit, secondary, 
       el.hidden = el.dataset.when !== mode;
     });
   };
-  form.addEventListener('change', syncWhen);
+  form.addEventListener('change', (e) => {
+    syncWhen();
+    const combo = e.target.closest?.('[data-combo]');
+    if (combo) {
+      const custom = combo.querySelector('.combo-custom');
+      const show = combo.querySelector('select').value === '__custom__';
+      custom.hidden = !show;
+      if (show) custom.querySelector('input').focus();
+    }
+  });
   syncWhen();
 
   // Sets editor: add a set (copying the one above it), remove a set, keep the numbers in order.
@@ -893,7 +1071,27 @@ function openDialog(title, fields, { submitLabel = 'Save', onSubmit, secondary, 
       }
     }
   });
-  form.querySelector('[data-cancel]').addEventListener('click', closeDialog);
+  // Closing with anything typed in asks first, so a stray tap does not lose your work.
+  const snapshot = () => JSON.stringify([...new FormData(form)].map(([k, v]) => [k, String(v)]));
+  const initial = snapshot();
+  const discard = form.querySelector('.discard');
+  const attemptClose = () => {
+    if (snapshot() === initial) {
+      closeDialog();
+      return;
+    }
+    discard.hidden = false;
+    form.classList.add('confirming');
+    discard.querySelector('[data-keep]').focus();
+  };
+  dlg._attempt = attemptClose;
+  form.querySelector('[data-cancel]').addEventListener('click', attemptClose);
+  form.querySelector('[data-x]').addEventListener('click', attemptClose);
+  form.querySelector('[data-keep]').addEventListener('click', () => {
+    discard.hidden = true;
+    form.classList.remove('confirming');
+  });
+  form.querySelector('[data-discard]').addEventListener('click', closeDialog);
   if (secondary) {
     const btn = form.querySelector('[data-secondary]');
     btn.textContent = secondary.label;
@@ -922,6 +1120,7 @@ function openDialog(title, fields, { submitLabel = 'Save', onSubmit, secondary, 
 }
 
 function closeDialog() {
+  dlg._attempt = null;
   if (dlg.open) dlg.close();
   dlg.replaceChildren();
 }
@@ -929,60 +1128,96 @@ function closeDialog() {
 function activityFields(a) {
   const isNew = !a;
   return [
-    { type: 'section', title: '1 · What are you tracking?', note: isNew ? 'Give it a name and say how it is measured.' : '' },
-    { name: 'name', label: 'Name', required: true, value: a?.name ?? '', placeholder: '5K run' },
-    { name: 'unit', label: 'Unit', value: a?.unit ?? '', placeholder: 'minutes, seconds, kg, km' },
+    { type: 'section', title: '1 · What Are You Tracking?', note: isNew ? 'Give it a name and say how it is measured.' : '' },
+    { name: 'name', label: 'Name', required: true, value: a?.name ?? '', placeholder: '5K Run' },
+    {
+      name: 'unit',
+      type: 'combo',
+      label: 'Unit',
+      value: core.normalizeUnit(a?.unit),
+      options: [['', 'No Unit'], ...core.unitOptions(state.data)],
+      customLabel: 'Add Custom Unit…',
+      customFieldLabel: 'Custom Unit',
+      placeholder: 'rounds, laps, watts…',
+    },
     {
       name: 'direction',
       type: 'select',
-      label: 'What counts as better?',
+      label: 'What Counts as Better?',
       value: a?.direction ?? 'higher',
       options: [
         ['higher', 'A higher number (weight, distance, reps)'],
         ['lower', 'A lower number (time, like a sprint)'],
       ],
     },
-    { type: 'section', title: '2 · Your starting record', note: 'Optional. The best you have done so far, so we know what to beat.' },
-    { name: 'startValue', type: 'number', label: 'Starting personal best', value: a?.startBest?.value ?? '' },
-    { name: 'startDate', type: 'date', label: 'When you set it', value: a?.startBest?.date ?? core.todayISO() },
-    { type: 'section', title: '3 · Goal', note: 'Choose now, or switch later with the Set a goal button.' },
+    { type: 'section', title: '2 · Your Starting Record', note: 'Optional. The best you have done so far, so we know what to beat.' },
+    { name: 'startValue', type: 'number', label: 'Starting Personal Best', value: a?.startBest?.value ?? '' },
+    { name: 'startDate', type: 'date', label: 'When You Set It', value: a?.startBest?.date ?? core.todayISO() },
+    { type: 'section', title: '3 · Goal', note: 'Choose now, or switch later with the Set a Goal button.' },
     {
       name: 'mode',
       type: 'segmented',
       value: a?.trackOnly ? 'track' : 'goal',
       options: [
-        ['goal', '🎯 Set a goal', 'Chase a target number'],
-        ['track', '📈 Just track it', 'Log attempts, no target'],
+        ['goal', '🎯 Set a Goal', 'Chase a target number'],
+        ['track', '📈 Just Track It', 'Log attempts, no target'],
       ],
     },
     {
       name: 'target',
       type: 'number',
-      label: 'Target to reach',
+      label: 'Target to Reach',
       value: a?.target ?? '',
-      hint: 'Optional. For example 12.49 when your best is 12.6.',
+      hint: 'Optional. For example, 185 when your best is 170.',
       when: 'goal',
     },
-    { name: 'goalDate', type: 'date', label: 'Goal date', value: a?.goalDate ?? '', hint: 'Optional deadline.', when: 'goal' },
+    { name: 'goalDate', type: 'date', label: 'Goal Date', value: a?.goalDate ?? '', hint: 'Optional deadline.', when: 'goal' },
   ];
 }
 
+const BEHIND_RECORD_MSG = 'Your target is already beaten by your starting record. Check the target, or whether a lower or higher number is better.';
+
 function openActivityDialog(id = null) {
   const existing = id ? core.findActivity(state.data, id) : null;
-  openDialog(existing ? 'Edit activity' : 'New activity', activityFields(existing), {
-    submitLabel: existing ? 'Save changes' : 'Create activity',
+  openDialog(existing ? 'Edit Activity' : 'New Activity', activityFields(existing), {
+    submitLabel: existing ? 'Save Changes' : 'Create Activity',
     onSubmit: (raw) => {
-      const { error, value } = core.parseActivityInput({ ...raw, trackOnly: raw.mode === 'track' });
+      const unit = comboValue(raw, 'unit');
+      const { error, value } = core.parseActivityInput({ ...raw, unit, trackOnly: raw.mode === 'track' });
       if (error) return error;
-      if (existing) commit((d) => core.updateActivity(core.findActivity(d, id), value));
-      else {
-        commit((d) => core.createActivity(d, value));
+      if (!value.trackOnly && value.target !== null && value.startBest && core.meetsTarget(value.startBest.value, value.target, value.direction)) {
+        return BEHIND_RECORD_MSG;
+      }
+      if (existing) {
+        commit((d) => {
+          core.rememberUnit(d, value.unit);
+          core.updateActivity(core.findActivity(d, id), value);
+        });
+      } else {
+        commit((d) => {
+          core.rememberUnit(d, value.unit);
+          core.createActivity(d, value);
+        });
         location.hash = '#/';
-        toast('Activity added. Tap “Log attempt” to record your first result.');
+        toast('Activity added. Tap “Log Attempt” to record your first result.');
       }
       return null;
     },
   });
+
+  // For a new activity, suggest the usual direction for the unit (time is lower, weight and distance are higher).
+  if (!existing) {
+    const unitSel = dlg.querySelector('select[name=unit]');
+    const dirSel = dlg.querySelector('select[name=direction]');
+    let touched = false;
+    dirSel.addEventListener('change', () => {
+      touched = true;
+    });
+    unitSel.addEventListener('change', () => {
+      if (touched || unitSel.value === '__custom__' || !unitSel.value) return;
+      dirSel.value = core.isTimeUnit(unitSel.value) ? 'lower' : 'higher';
+    });
+  }
 }
 
 function openGoalDialog(id) {
@@ -991,7 +1226,7 @@ function openGoalDialog(id) {
   const best = core.currentBest(a);
   const hasGoal = !a.trackOnly && a.target != null;
   openDialog(
-    hasGoal ? `Edit goal · ${a.name}` : `Set a goal · ${a.name}`,
+    hasGoal ? `Edit Goal · ${a.name}` : `Set a Goal · ${a.name}`,
     [
       {
         name: 'target',
@@ -1001,14 +1236,14 @@ function openGoalDialog(id) {
         value: a.trackOnly ? '' : (a.target ?? ''),
         hint: `${a.direction === 'lower' ? 'Lower' : 'Higher'} is better.${best ? ` Your best so far is ${best.value}${a.unit ? ` ${a.unit}` : ''}.` : ''}`,
       },
-      { name: 'goalDate', type: 'date', label: 'Goal date', value: a.trackOnly ? '' : (a.goalDate ?? ''), hint: 'Optional deadline.' },
+      { name: 'goalDate', type: 'date', label: 'Goal Date', value: a.trackOnly ? '' : (a.goalDate ?? ''), hint: 'Optional deadline.' },
     ],
     {
       message: 'A goal is the number you are working toward. It does not change your attempts or records.',
-      submitLabel: 'Save goal',
+      submitLabel: 'Save Goal',
       secondary: hasGoal
         ? {
-            label: 'Remove goal',
+            label: 'Remove Goal',
             onClick: () => {
               commit((d) => core.updateActivity(core.findActivity(d, id), { trackOnly: true, target: null, goalDate: null }));
               toast('Goal removed. This activity is now track only.');
@@ -1019,6 +1254,7 @@ function openGoalDialog(id) {
         const base = core.parseActivityInput({ name: a.name, trackOnly: false, target: raw.target, goalDate: raw.goalDate });
         if (base.error) return base.error;
         if (base.value.target === null) return 'Enter a target number.';
+        if (a.startBest && core.meetsTarget(a.startBest.value, base.value.target, a.direction)) return BEHIND_RECORD_MSG;
         commit((d) =>
           core.updateActivity(core.findActivity(d, id), {
             trackOnly: false,
@@ -1038,7 +1274,7 @@ function openAttemptDialog(activityId, attemptId = null) {
   if (!a) return;
   const t = attemptId ? core.findAttempt(a, attemptId) : null;
   openDialog(
-    t ? 'Edit attempt' : `Log attempt · ${a.name}`,
+    t ? 'Edit Attempt' : `Log Attempt · ${a.name}`,
     [
       { name: 'date', type: 'date', label: 'Date', required: true, value: t?.date ?? core.todayISO() },
       {
@@ -1051,7 +1287,7 @@ function openAttemptDialog(activityId, attemptId = null) {
       { name: 'notes', type: 'textarea', label: 'Notes', value: t?.notes ?? '' },
     ],
     {
-      submitLabel: t ? 'Save' : 'Log',
+      submitLabel: t ? 'Save' : 'Log Attempt',
       secondary: t ? { label: 'Delete', onClick: () => deleteAttempt(activityId, attemptId) } : null,
       onSubmit: (raw) => {
         const { error, value } = core.parseAttemptInput(raw);
@@ -1070,32 +1306,89 @@ function openAttemptDialog(activityId, attemptId = null) {
 function openExerciseDialog(id = null) {
   const existing = id ? core.findExercise(state.data, id) : null;
   openDialog(
-    existing ? 'Edit exercise' : 'New exercise',
+    existing ? 'Edit Exercise' : 'New Exercise',
     [
-      { name: 'name', label: 'Name', required: true, value: existing?.name ?? '', placeholder: 'Incline smith bench' },
+      { name: 'name', label: 'Name', required: true, value: existing?.name ?? '', placeholder: 'Incline Smith Bench' },
+      {
+        name: 'category',
+        type: 'combo',
+        label: 'Category',
+        value: existing?.category ?? '',
+        options: [['', 'No Category'], ...state.data.categories.map((c) => [c, c])],
+        customLabel: 'Add New Category…',
+        customFieldLabel: 'New Category',
+        placeholder: 'Core, Mobility, Shoulders…',
+      },
       {
         name: 'unit',
         type: 'select',
-        label: 'Weight unit',
+        label: 'Weight Unit',
         value: existing?.unit ?? 'lb',
         options: [
           ['lb', 'Pounds (lb)'],
           ['kg', 'Kilograms (kg)'],
         ],
       },
-      { name: 'notes', type: 'textarea', label: 'Details (optional)', value: existing?.notes ?? '' },
+      { name: 'notes', type: 'textarea', label: 'Details (Optional)', value: existing?.notes ?? '' },
     ],
     {
-      submitLabel: existing ? 'Save changes' : 'Add exercise',
+      submitLabel: existing ? 'Save Changes' : 'Add Exercise',
       onSubmit: (raw) => {
-        const { error, value } = core.parseExerciseInput(raw);
+        const { error, value } = core.parseExerciseInput({ ...raw, category: comboValue(raw, 'category') });
         if (error) return error;
-        if (existing) commit((d) => core.updateExercise(core.findExercise(d, id), value));
-        else {
-          const created = commit((d) => core.createExercise(d, value));
+        const addCategory = (d) => {
+          const known = d.categories.find((c) => c.toLowerCase() === value.category.toLowerCase());
+          if (known) value.category = known;
+          else if (value.category) d.categories.push(value.category);
+        };
+        if (existing) {
+          commit((d) => {
+            addCategory(d);
+            core.updateExercise(core.findExercise(d, id), value);
+          });
+        } else {
+          const created = commit((d) => {
+            addCategory(d);
+            return core.createExercise(d, value);
+          });
           location.hash = '#/exercises';
-          toast(`Added “${created.name}”. Tap “Log session” to record your sets.`);
+          toast(`Added “${created.name}”. Tap “Log Session” to record your sets.`);
         }
+        return null;
+      },
+    },
+  );
+}
+
+function openCategoriesDialog() {
+  const cats = state.data.categories;
+  openDialog(
+    'Manage Categories',
+    [
+      ...cats.map((c, i) => ({ name: `cat_${i}`, label: i === 0 ? 'Rename or Clear to Remove' : '', value: c })),
+      { name: 'cat_new', label: 'Add a Category', value: '', placeholder: 'Shoulders, Mobility…' },
+    ],
+    {
+      message: 'Exercises in a removed category are kept and move to “Other”.',
+      submitLabel: 'Save Categories',
+      onSubmit: (raw) => {
+        const renames = new Map();
+        const next = [];
+        cats.forEach((old, i) => {
+          const name = String(raw[`cat_${i}`] ?? '').trim();
+          if (name && !next.some((c) => c.toLowerCase() === name.toLowerCase())) {
+            next.push(name);
+            renames.set(old, name);
+          } else if (name) {
+            renames.set(old, next.find((c) => c.toLowerCase() === name.toLowerCase()));
+          } else renames.set(old, '');
+        });
+        const added = String(raw.cat_new ?? '').trim();
+        if (added && !next.some((c) => c.toLowerCase() === added.toLowerCase())) next.push(added);
+        commit((d) => {
+          d.categories = next;
+          for (const e of d.exercises) if (e.category) e.category = renames.get(e.category) ?? e.category;
+        });
         return null;
       },
     },
@@ -1110,7 +1403,7 @@ function openSessionDialog(exerciseId, sessionId = null) {
   const basis = existing ?? core.lastSession(e);
   const sets = basis ? basis.sets.map((s) => ({ ...s })) : [{}, {}, {}];
   openDialog(
-    existing ? `Edit session · ${e.name}` : `Log session · ${e.name}`,
+    existing ? `Edit Session · ${e.name}` : `Log Session · ${e.name}`,
     [
       { name: 'date', type: 'date', label: 'Date', required: true, value: existing?.date ?? core.todayISO() },
       { type: 'sets', value: sets, unit: e.unit },
@@ -1118,7 +1411,7 @@ function openSessionDialog(exerciseId, sessionId = null) {
     ],
     {
       message: !existing && basis ? 'Started from your last session. Change what is different today.' : '',
-      submitLabel: existing ? 'Save' : 'Log session',
+      submitLabel: existing ? 'Save' : 'Log Session',
       secondary: existing ? { label: 'Delete', onClick: () => deleteSession(exerciseId, sessionId) } : null,
       onSubmit: (raw, form) => {
         const rows = [...form.querySelectorAll('[data-sets-list] .set-row')].map((row) => ({
@@ -1143,24 +1436,24 @@ function openSessionDialog(exerciseId, sessionId = null) {
 function openSettings() {
   const c = state.config ?? {};
   openDialog(
-    'Sync settings',
+    'Sync Settings',
     [
-      { name: 'owner', label: 'GitHub username or organization', required: true, value: c.owner ?? '', placeholder: 'your-username' },
-      { name: 'repo', label: 'Private repository name', required: true, value: c.repo ?? '', placeholder: 'personal-bests-data' },
-      { name: 'path', label: 'Data file path', value: c.path ?? DEFAULT_PATH },
+      { name: 'owner', label: 'GitHub Username or Organization', required: true, value: c.owner ?? '', placeholder: 'your-username' },
+      { name: 'repo', label: 'Private Repository Name', required: true, value: c.repo ?? '', placeholder: 'personal-bests-data' },
+      { name: 'path', label: 'Data File Path', value: c.path ?? DEFAULT_PATH },
       { name: 'branch', label: 'Branch', value: c.branch ?? 'main' },
       {
         name: 'token',
         type: 'password',
-        label: 'Access token',
+        label: 'Access Token',
         value: '',
         placeholder: c.token ? 'Saved on this device. Leave blank to keep it.' : 'github_pat_…',
         hint: 'A fine-grained token with Contents read and write access to this repository. It is stored only in this browser.',
       },
     ],
     {
-      submitLabel: 'Save and sync',
-      secondary: isConfigured() ? { label: 'Sign out of this device', onClick: signOut } : null,
+      submitLabel: 'Save and Sync',
+      secondary: isConfigured() ? { label: 'Sign Out of This Device', onClick: signOut } : null,
       onSubmit: async (raw) => {
         const cfg = {
           owner: String(raw.owner ?? '').trim(),
@@ -1238,6 +1531,19 @@ function deleteSession(exerciseId, sessionId) {
   });
 }
 
+function flipDirection(id) {
+  const a = core.findActivity(state.data, id);
+  if (!a) return;
+  commit((d) => {
+    const act = core.findActivity(d, id);
+    act.direction = act.direction === 'lower' ? 'higher' : 'lower';
+    act.beaten = false;
+    act.reachedGoal = false;
+    core.refreshFlags(act);
+  });
+  toast(`Now ${core.findActivity(state.data, id).direction === 'lower' ? 'lower' : 'higher'} is better.`);
+}
+
 function deleteIdea(id) {
   const removed = commit((d) => core.removeById(d.ideas, id));
   if (!removed) return;
@@ -1250,9 +1556,9 @@ function deleteIdea(id) {
 function confirmDeleteAllIdeas() {
   const count = state.data.ideas.length;
   if (!count) return;
-  openDialog('Delete all ideas?', [], {
+  openDialog('Delete All Ideas?', [], {
     message: `This removes all ${count} idea${count === 1 ? '' : 's'}. You can undo right after.`,
-    submitLabel: 'Delete all',
+    submitLabel: 'Delete All',
     onSubmit: () => {
       const removed = [...state.data.ideas];
       commit((d) => {
@@ -1281,8 +1587,8 @@ async function copyIdeas() {
     toast(`Copied ${ideas.length} idea${ideas.length === 1 ? '' : 's'}`);
   } else {
     openDialog(
-      'Copy these manually',
-      [{ name: 'copy', type: 'textarea', label: 'Select all and copy', value: text, readonly: true, rows: 12 }],
+      'Copy These Manually',
+      [{ name: 'copy', type: 'textarea', label: 'Select All and Copy', value: text, readonly: true, rows: 12 }],
       { submitLabel: 'Done', onSubmit: () => null },
     );
   }
@@ -1326,7 +1632,7 @@ function showWhatsNew(current, previous) {
       <div class="dlg-actions">
         <a class="link" href="#/versions" data-wn-history>See Version History</a>
         <span class="grow"></span>
-        <button class="btn primary" type="button" data-wn-close>Got it</button>
+        <button class="btn primary" type="button" data-wn-close>Got It</button>
       </div>
     </div>`;
   if (!whatsNewEl.open) whatsNewEl.showModal();
@@ -1391,7 +1697,7 @@ function onViewClick(e) {
   if (state.suppressClick || e.target.closest('.drag-handle')) return;
   const el = e.target.closest('[data-action]');
   if (!el) return;
-  const { action, id, attempt, session } = el.dataset;
+  const { action, id, attempt, session, cat, mode } = el.dataset;
   switch (action) {
     case 'open':
       location.hash = `#/activity/${id}`;
@@ -1419,6 +1725,21 @@ function onViewClick(e) {
       break;
     case 'delete-attempt':
       deleteAttempt(id, attempt);
+      break;
+    case 'filter':
+      state.exFilter = cat;
+      render();
+      break;
+    case 'set-view':
+      state.exView = mode;
+      writeJSON(VIEW_KEY, mode);
+      render();
+      break;
+    case 'manage-categories':
+      openCategoriesDialog();
+      break;
+    case 'flip-direction':
+      flipDirection(id);
       break;
     case 'open-exercise':
       location.hash = `#/exercise/${id}`;
@@ -1560,10 +1881,18 @@ $('#menu-settings').addEventListener('click', () => {
   menuEl.close();
   openSettings();
 });
+$('#menu-lock').addEventListener('click', () => {
+  lockNow();
+  location.reload();
+});
 $('#menu-version').textContent = `Version ${VERSIONS[0].number}`;
 
 dlg.addEventListener('click', (e) => {
-  if (e.target === dlg) closeDialog();
+  if (e.target === dlg) (dlg._attempt ?? closeDialog)();
+});
+dlg.addEventListener('cancel', (e) => {
+  e.preventDefault(); // Escape asks before throwing away what was typed
+  (dlg._attempt ?? closeDialog)();
 });
 
 window.addEventListener('hashchange', () => {
@@ -1601,7 +1930,14 @@ if ('serviceWorker' in navigator) {
     .catch(() => {});
 }
 
-render();
-setStatus(isConfigured() ? 'syncing' : 'local');
-pull();
-checkWhatsNew();
+// Start the app once the code screen is passed (a device that entered the code stays unlocked for 7 days).
+function start() {
+  state.started = true;
+  render();
+  setStatus(isConfigured() ? 'syncing' : 'local');
+  pull();
+  checkWhatsNew();
+}
+
+if (isUnlocked()) start();
+else showLock($('#lock')).then(start);

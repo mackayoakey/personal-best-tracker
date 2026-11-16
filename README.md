@@ -9,6 +9,7 @@ A personal progress web app for tracking personal-best goals. It is a static sit
 - `app.js`: the screens, menu, sync, and offline handling
 - `versions.js`: the Version History content (the newest entry also powers the “app updated” pop-up). Add a new entry at the top for each change.
 - `logo-flame.png`: the flame logo shown in the header
+- `lock.js`: the 4-digit code screen (remembers a device for 7 days). It is a casual lock, not strong security.
 - `sw.js`, `manifest.webmanifest`, `icon-v4-*.png`: installable PWA and offline support
 
 ## Setup
