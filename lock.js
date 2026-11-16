@@ -31,6 +31,16 @@ export function lockNow() {
   }
 }
 
+// When this device's unlock runs out, or null if it is not unlocked.
+export function unlockedUntil() {
+  try {
+    const t = Number(localStorage.getItem(KEY));
+    return t > Date.now() ? new Date(t) : null;
+  } catch {
+    return null;
+  }
+}
+
 function remember() {
   try {
     localStorage.setItem(KEY, String(Date.now() + REMEMBER_DAYS * 86400000));
@@ -63,6 +73,7 @@ export function showLock(el) {
     const paint = () => dots.forEach((d, i) => d.classList.toggle('on', i < code.length));
 
     async function press(k) {
+      if (el.querySelector('.lock-pad.done')) return;
       if (Date.now() < waitUntil) {
         msg.textContent = `Too many tries. Wait ${Math.ceil((waitUntil - Date.now()) / 1000)} seconds.`;
         return;
@@ -75,9 +86,15 @@ export function showLock(el) {
       if ((await hash(code)) === CODE_HASH) {
         remember();
         document.removeEventListener('keydown', onKey);
-        el.hidden = true;
-        el.replaceChildren();
-        resolve();
+        const until = unlockedUntil()?.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+        msg.classList.add('ok');
+        msg.textContent = `✓ Unlocked. This device is remembered for ${REMEMBER_DAYS} days${until ? ` (until ${until})` : ''}.`;
+        el.querySelector('.lock-pad').classList.add('done');
+        setTimeout(() => {
+          el.hidden = true;
+          el.replaceChildren();
+          resolve();
+        }, 2200);
         return;
       }
       tries += 1;

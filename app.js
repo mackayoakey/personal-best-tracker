@@ -2,7 +2,7 @@
 import * as core from './core.js';
 import * as gh from './github.js';
 import { VERSIONS } from './versions.js';
-import { isUnlocked, showLock, lockNow } from './lock.js';
+import { isUnlocked, showLock, lockNow, unlockedUntil } from './lock.js';
 
 const CONFIG_KEY = 'pbt.config';
 const CACHE_KEY = 'pbt.cache';
@@ -1883,6 +1883,10 @@ function onDragStart(e) {
   handle.addEventListener('pointercancel', onUp);
 }
 
+// ---------- no zoom ----------
+// Double-tap zoom is turned off in the styles (touch-action), and these stop pinch zoom on iPhone.
+['gesturestart', 'gesturechange', 'gestureend'].forEach((type) => document.addEventListener(type, (e) => e.preventDefault()));
+
 // ---------- boot ----------
 
 view.addEventListener('click', onViewClick);
@@ -1898,6 +1902,10 @@ statusEl.addEventListener('click', () => {
 });
 
 $('#menu-btn').addEventListener('click', () => {
+  const until = unlockedUntil();
+  $('#menu-remember').textContent = until
+    ? `This device stays unlocked until ${until.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}.`
+    : '';
   if (!menuEl.open) menuEl.showModal();
 });
 menuEl.addEventListener('click', (e) => {

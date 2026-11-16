@@ -17,7 +17,8 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 
-html { background: var(--bg); }
+html { background: var(--bg); touch-action: manipulation; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body { touch-action: manipulation; }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 
 body {
@@ -517,3 +518,7 @@ dialog.dialog-host, #dlg {
 
 .card .stats.three .value { font-size: 1.2rem; }
 .card .stats.three { gap: 8px; }
+
+.lock-msg.ok { color: var(--accent); font-weight: 600; }
+.lock-pad.done { opacity: 0.35; pointer-events: none; }
+.menu-foot:empty { display: none; }

@@ -1,6 +1,16 @@
 // Newest first. Add a new entry at the top each time the app changes.
 export const VERSIONS = [
   {
+    number: 'V9',
+    date: '2026-11-16',
+    title: 'No zoom, and a remember-me message',
+    changes: [
+      'Double-tapping and pinching no longer zoom the app, so the layout stays put.',
+      'After you enter the code, the app tells you this device is remembered for 7 days, and says until when.',
+      'The menu also shows when this device stays unlocked until.',
+    ],
+  },
+  {
     number: 'V8',
     date: '2026-11-16',
     title: 'Type times like 6:36',
