@@ -250,6 +250,43 @@ function greeting() {
   return h < 5 ? 'Up late' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
 }
 
+function tabsView(active) {
+  return `<nav class="tabs" aria-label="Sections">
+    <a class="tab${active === 'bests' ? ' active' : ''}" href="#/"${active === 'bests' ? ' aria-current="page"' : ''}>Bests</a>
+    <a class="tab${active === 'exercises' ? ' active' : ''}" href="#/exercises"${active === 'exercises' ? ' aria-current="page"' : ''}>Exercises</a>
+  </nav>`;
+}
+
+const HEAT_WEEKS = 6;
+
+function heatmapView() {
+  const weeks = core.heatmapWeeks(core.loggedDates(state.data), HEAT_WEEKS);
+  const total = weeks.flat().filter((d) => d.logged).length;
+  const dow = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+  const head = `<span></span>${dow.map((d, i) => `<span class="heat-dow${i >= 5 ? ' we' : ''}">${d}</span>`).join('')}`;
+  const rows = weeks
+    .map((days) => {
+      const label = new Date(`${days[0].date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      const cells = days
+        .map((d) => {
+          const cls = ['heat-cell', d.weekend ? 'we' : '', d.logged ? 'on' : '', d.future ? 'future' : '', d.today ? 'today' : ''].filter(Boolean).join(' ');
+          return `<span class="${cls}" title="${fmtDate(d.date)}${d.logged ? ': logged' : ''}"></span>`;
+        })
+        .join('');
+      return `<span class="heat-wk">${label}</span>${cells}`;
+    })
+    .join('');
+  return `
+    <section class="panel heat" aria-label="Activity heat map">
+      <div class="heat-head">
+        <h2>Last ${HEAT_WEEKS} weeks</h2>
+        <span class="sub">${total} day${total === 1 ? '' : 's'} logged</span>
+      </div>
+      <div class="heat-grid" role="img" aria-label="${total} days logged in the last ${HEAT_WEEKS} weeks">${head}${rows}</div>
+      <div class="heat-key"><span><i style="background:var(--accent)"></i>Logged</span><span><i style="background:var(--panel-2)"></i>Nothing</span><span><i style="background:#1f2227"></i>Weekend</span></div>
+    </section>`;
+}
+
 function dashboardView() {
   const today = core.todayISO();
   const notice = isConfigured()
@@ -258,6 +295,7 @@ function dashboardView() {
   const list = state.data.activities;
   if (!list.length) {
     return `${notice}
+      ${tabsView('bests')}
       <section class="welcome">
         <div class="welcome-flame" aria-hidden="true">🔥</div>
         <h1>Let’s track your bests</h1>
@@ -275,10 +313,12 @@ function dashboardView() {
   const summary = `${list.length} activit${list.length === 1 ? 'y' : 'ies'}` + (goals ? ` · ${reached} of ${goals} goal${goals === 1 ? '' : 's'} reached` : '');
   const hint = list.length > 1 ? '<p class="hint">Tip: drag ⋮⋮ to reorder your activities.</p>' : '';
   return `${notice}
+    ${tabsView('bests')}
     <section class="hero">
       <h1>${greeting()} 👋</h1>
       <p class="sub">${summary}</p>
     </section>
+    ${heatmapView()}
     <div class="cards">
       ${list.map((a) => cardView(a, today)).join('')}
       <button class="card-add" type="button" data-action="new-activity">
@@ -422,6 +462,146 @@ function detailView(a) {
     </section>`;
 }
 
+// ---------- exercises ----------
+
+const fmtWeight = (w, unit) => (w > 0 ? `${fmtNum(w)} ${unit}` : 'bodyweight');
+
+// "3×8 @ 135 lb, 1×6 @ 135 lb": runs of identical sets are grouped.
+function setsText(sets, unit) {
+  const groups = [];
+  for (const s of sets) {
+    const last = groups[groups.length - 1];
+    if (last && last.reps === s.reps && last.weight === s.weight) last.n += 1;
+    else groups.push({ n: 1, reps: s.reps, weight: s.weight });
+  }
+  return groups.map((g) => `${g.n}×${fmtNum(g.reps)}${g.weight > 0 ? ` @ ${fmtNum(g.weight)} ${esc(unit)}` : ''}`).join(', ');
+}
+
+function topSetText(st, unit) {
+  return st.topWeight > 0 ? `${fmtNum(st.topWeight)} ${esc(unit)} × ${fmtNum(st.topReps)}` : `${fmtNum(st.topReps)} reps`;
+}
+
+function deltaView(change) {
+  if (!change) return '<p class="delta">Log two sessions to see how you are progressing.</p>';
+  const arrow = change.dir === 'up' ? '↗' : change.dir === 'down' ? '↘' : '→';
+  return `<p class="delta ${change.dir}">${arrow} ${esc(change.text)}</p>`;
+}
+
+function exercisesView() {
+  const list = state.data.exercises;
+  const head = `${tabsView('exercises')}`;
+  if (!list.length) {
+    return `${head}
+      <section class="welcome">
+        <h1>Track the exercises you like</h1>
+        <p class="sub">Add an exercise, then log sets, reps, and weight whenever you do it. You will see whether you are lifting more over time.</p>
+        <p class="sub">For example: Incline smith bench, Flat dumbbell bench, Pull-ups.</p>
+        <p><button class="btn primary big" data-action="new-exercise">＋ Add your first exercise</button></p>
+      </section>`;
+  }
+  const cards = list
+    .map((e) => {
+      const last = core.lastSession(e);
+      const st = last ? core.sessionStats(last) : null;
+      return `
+      <article class="card plain" data-action="open-exercise" data-id="${e.id}">
+        <div class="card-body">
+          <div class="card-head">
+            <h2>${esc(e.name)}</h2>
+            <div class="badges"><span class="badge">${e.sessions.length} session${e.sessions.length === 1 ? '' : 's'}</span></div>
+          </div>
+          ${
+            last
+              ? `<div class="stats"><div><span class="label">Top set last time</span><span class="value">${topSetText(st, e.unit)}</span><span class="sub">${fmtDate(last.date)}</span></div></div>
+                 <p class="ex-line">${setsText(last.sets, e.unit)}</p>
+                 ${deltaView(core.sessionChange(e))}`
+              : '<p class="sub">No sessions yet. Log your first one.</p>'
+          }
+          <div class="card-actions">
+            <button class="btn primary small" type="button" data-action="log-session" data-id="${e.id}">＋ Log session</button>
+          </div>
+        </div>
+      </article>`;
+    })
+    .join('');
+  return `${head}
+    ${heatmapView()}
+    <div class="cards">
+      ${cards}
+      <button class="card-add" type="button" data-action="new-exercise">
+        <span class="plus">＋</span>
+        <strong>New exercise</strong>
+        <span class="sub">Something else to track</span>
+      </button>
+    </div>`;
+}
+
+function exerciseDetailView(e) {
+  const history = core.sortSessions(e.sessions).reverse();
+  const best = core.bestSession(e);
+  const last = history[0];
+  const tr = core.exerciseTrend(e);
+  const chartNote = tr.weighted ? 'Top weight per session' : 'Top reps per session';
+
+  const rows = history
+    .map(
+      (s) => `
+      <li class="attempt${best && s.id === best.session.id ? ' is-best' : ''}">
+        <div class="attempt-main">
+          <strong class="session-sets">${setsText(s.sets, e.unit)}</strong>
+          <span class="sub">${fmtDate(s.date)}</span>
+          ${best && s.id === best.session.id ? '<span class="badge">Best top set</span>' : ''}
+        </div>
+        ${s.notes ? `<p class="notes">${esc(s.notes)}</p>` : ''}
+        <div class="row-actions">
+          <button class="link" data-action="edit-session" data-id="${e.id}" data-session="${s.id}">Edit</button>
+          <button class="link danger" data-action="delete-session" data-id="${e.id}" data-session="${s.id}">Delete</button>
+        </div>
+      </li>`,
+    )
+    .join('');
+
+  return `
+    <nav class="crumbs"><a href="#/exercises">← Exercises</a></nav>
+    <header class="detail-head">
+      <div>
+        <h1>${esc(e.name)}</h1>
+        <p class="sub">Weights in ${esc(e.unit)}</p>
+        ${e.notes ? `<p class="ex-notes sub">${esc(e.notes)}</p>` : ''}
+      </div>
+      <div class="row-actions">
+        <button class="btn" data-action="edit-exercise" data-id="${e.id}">Edit exercise</button>
+        <button class="btn danger" data-action="delete-exercise" data-id="${e.id}">Delete</button>
+      </div>
+    </header>
+
+    <section class="stats big">
+      <div>
+        <span class="label">Last session</span>
+        <span class="value">${last ? topSetText(core.sessionStats(last), e.unit) : '—'}</span>
+        ${last ? `<span class="sub">${fmtDate(last.date)}</span>` : ''}
+      </div>
+      <div>
+        <span class="label">Best top set</span>
+        <span class="value">${best ? topSetText(best.stats, e.unit) : '—'}</span>
+        ${best ? `<span class="sub">${fmtDate(best.session.date)}</span>` : ''}
+      </div>
+    </section>
+    ${deltaView(core.sessionChange(e))}
+    <p><button class="btn primary big" data-action="log-session" data-id="${e.id}">＋ Log session</button></p>
+
+    <section class="panel">
+      <h2>Trend</h2>
+      <p class="sub">${chartNote}</p>
+      ${chartView({ unit: tr.weighted ? e.unit : 'reps', direction: 'higher', target: null, startBest: null, trackOnly: true }, tr)}
+    </section>
+
+    <section class="panel">
+      <h2>History</h2>
+      ${history.length ? `<ul class="attempts">${rows}</ul>` : '<p class="sub">No sessions yet. Tap “Log session” to add your first.</p>'}
+    </section>`;
+}
+
 function chartView(a, tr) {
   if (!tr.points.length) return '<p class="sub">Log an attempt to see the trend.</p>';
 
@@ -528,9 +708,8 @@ function versionsView() {
     (v, i) => `
       <details class="version"${i === 0 ? ' open' : ''}>
         <summary>
-          <span class="badge">${esc(v.number)}</span>
-          <strong>${esc(v.title)}</strong>
-          <span class="sub">${fmtDate(v.date)}</span>
+          <span class="version-title"><span class="badge">${esc(v.number)}</span><strong>${esc(v.title)}</strong></span>
+          <span class="version-date">${fmtDate(v.date)}</span>
         </summary>
         <ul>${v.changes.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>
       </details>`,
@@ -548,6 +727,9 @@ function parseRoute() {
   const hash = location.hash;
   const detail = hash.match(/^#\/activity\/([\w-]+)$/);
   if (detail) return { name: 'detail', id: detail[1] };
+  const exDetail = hash.match(/^#\/exercise\/([\w-]+)$/);
+  if (exDetail) return { name: 'exercise', id: exDetail[1] };
+  if (hash === '#/exercises') return { name: 'exercises' };
   if (hash === '#/ideas') return { name: 'ideas' };
   if (hash === '#/versions') return { name: 'versions' };
   return { name: 'dashboard' };
@@ -566,6 +748,17 @@ function render() {
     }
     html = detailView(a);
     title = `${a.name} · Personal Bests`;
+  } else if (route.name === 'exercise') {
+    const e = core.findExercise(state.data, route.id);
+    if (!e) {
+      location.hash = '#/exercises';
+      return;
+    }
+    html = exerciseDetailView(e);
+    title = `${e.name} · Personal Bests`;
+  } else if (route.name === 'exercises') {
+    html = exercisesView();
+    title = 'Exercises · Personal Bests';
   } else if (route.name === 'ideas') {
     html = ideasView();
     title = 'Ideas · Personal Bests';
@@ -578,7 +771,13 @@ function render() {
 
   view.innerHTML = html;
   document.title = title;
-  addBtn.hidden = route.name !== 'dashboard' || !state.data.activities.length;
+  if (route.name === 'exercises') {
+    addBtn.textContent = '＋ New exercise';
+    addBtn.hidden = !state.data.exercises.length;
+  } else {
+    addBtn.textContent = '＋ New activity';
+    addBtn.hidden = route.name !== 'dashboard' || !state.data.activities.length;
+  }
 }
 
 // ---------- dialogs ----------
@@ -588,7 +787,25 @@ function fieldHTML(f) {
   return f.when ? `<div class="when" data-when="${f.when}">${html}</div>` : html;
 }
 
+function setRowHTML(n, set = {}) {
+  return `<div class="set-row">
+    <span class="set-n">${n}</span>
+    <input type="number" name="weight" step="any" min="0" inputmode="decimal" placeholder="0" aria-label="Weight for set ${n}" value="${esc(set.weight || '')}">
+    <input type="number" name="reps" step="1" min="1" inputmode="numeric" placeholder="reps" aria-label="Reps for set ${n}" value="${esc(set.reps ?? '')}">
+    <button type="button" class="link danger" data-remove-set aria-label="Remove set ${n}">✕</button>
+  </div>`;
+}
+
 function fieldInner(f) {
+  if (f.type === 'sets') {
+    const rows = f.value.map((s, i) => setRowHTML(i + 1, s)).join('');
+    return `<div class="sets" data-sets>
+      <div class="sets-head"><span>Set</span><span>Weight (${esc(f.unit)})</span><span>Reps</span><span></span></div>
+      <div data-sets-list style="display:grid;gap:8px">${rows}</div>
+      <button type="button" class="btn small" data-add-set>＋ Add set</button>
+      <small>Leave weight empty for bodyweight exercises.</small>
+    </div>`;
+  }
   if (f.type === 'section') {
     return `<div class="dlg-section"><h3>${esc(f.title)}</h3>${f.note ? `<p class="sub">${esc(f.note)}</p>` : ''}</div>`;
   }
@@ -646,6 +863,36 @@ function openDialog(title, fields, { submitLabel = 'Save', onSubmit, secondary, 
   };
   form.addEventListener('change', syncWhen);
   syncWhen();
+
+  // Sets editor: add a set (copying the one above it), remove a set, keep the numbers in order.
+  const renumber = () => {
+    form.querySelectorAll('[data-sets-list] .set-row').forEach((row, i) => {
+      row.querySelector('.set-n').textContent = i + 1;
+    });
+  };
+  form.addEventListener('click', (e) => {
+    const list = form.querySelector('[data-sets-list]');
+    if (!list) return;
+    if (e.target.closest('[data-add-set]')) {
+      const rows = list.querySelectorAll('.set-row');
+      const prev = rows[rows.length - 1];
+      const tmp = document.createElement('div');
+      tmp.innerHTML = setRowHTML(rows.length + 1, {
+        weight: prev?.querySelector('[name=weight]').value,
+        reps: prev?.querySelector('[name=reps]').value,
+      });
+      const row = tmp.firstElementChild;
+      list.append(row);
+      row.querySelector('[name=reps]').focus();
+      row.querySelector('[name=reps]').select();
+    } else if (e.target.closest('[data-remove-set]')) {
+      const rows = list.querySelectorAll('.set-row');
+      if (rows.length > 1) {
+        e.target.closest('.set-row').remove();
+        renumber();
+      }
+    }
+  });
   form.querySelector('[data-cancel]').addEventListener('click', closeDialog);
   if (secondary) {
     const btn = form.querySelector('[data-secondary]');
@@ -660,7 +907,7 @@ function openDialog(title, fields, { submitLabel = 'Save', onSubmit, secondary, 
     const submitBtn = form.querySelector('[type=submit]');
     submitBtn.disabled = true;
     try {
-      const error = await onSubmit(Object.fromEntries(new FormData(form)));
+      const error = await onSubmit(Object.fromEntries(new FormData(form)), form);
       if (error) errorEl.textContent = error;
       else closeDialog();
     } finally {
@@ -820,6 +1067,79 @@ function openAttemptDialog(activityId, attemptId = null) {
   );
 }
 
+function openExerciseDialog(id = null) {
+  const existing = id ? core.findExercise(state.data, id) : null;
+  openDialog(
+    existing ? 'Edit exercise' : 'New exercise',
+    [
+      { name: 'name', label: 'Name', required: true, value: existing?.name ?? '', placeholder: 'Incline smith bench' },
+      {
+        name: 'unit',
+        type: 'select',
+        label: 'Weight unit',
+        value: existing?.unit ?? 'lb',
+        options: [
+          ['lb', 'Pounds (lb)'],
+          ['kg', 'Kilograms (kg)'],
+        ],
+      },
+      { name: 'notes', type: 'textarea', label: 'Details (optional)', value: existing?.notes ?? '' },
+    ],
+    {
+      submitLabel: existing ? 'Save changes' : 'Add exercise',
+      onSubmit: (raw) => {
+        const { error, value } = core.parseExerciseInput(raw);
+        if (error) return error;
+        if (existing) commit((d) => core.updateExercise(core.findExercise(d, id), value));
+        else {
+          const created = commit((d) => core.createExercise(d, value));
+          location.hash = '#/exercises';
+          toast(`Added “${created.name}”. Tap “Log session” to record your sets.`);
+        }
+        return null;
+      },
+    },
+  );
+}
+
+function openSessionDialog(exerciseId, sessionId = null) {
+  const e = core.findExercise(state.data, exerciseId);
+  if (!e) return;
+  const existing = sessionId ? e.sessions.find((s) => s.id === sessionId) : null;
+  // A new session starts from the last one, so you only change what moved.
+  const basis = existing ?? core.lastSession(e);
+  const sets = basis ? basis.sets.map((s) => ({ ...s })) : [{}, {}, {}];
+  openDialog(
+    existing ? `Edit session · ${e.name}` : `Log session · ${e.name}`,
+    [
+      { name: 'date', type: 'date', label: 'Date', required: true, value: existing?.date ?? core.todayISO() },
+      { type: 'sets', value: sets, unit: e.unit },
+      { name: 'notes', type: 'textarea', label: 'Notes', value: existing?.notes ?? '', rows: 2 },
+    ],
+    {
+      message: !existing && basis ? 'Started from your last session. Change what is different today.' : '',
+      submitLabel: existing ? 'Save' : 'Log session',
+      secondary: existing ? { label: 'Delete', onClick: () => deleteSession(exerciseId, sessionId) } : null,
+      onSubmit: (raw, form) => {
+        const rows = [...form.querySelectorAll('[data-sets-list] .set-row')].map((row) => ({
+          weight: row.querySelector('[name=weight]').value,
+          reps: row.querySelector('[name=reps]').value,
+        }));
+        const { error, value } = core.parseSessionInput({ date: raw.date, notes: raw.notes, sets: rows });
+        if (error) return error;
+        commit((d) => {
+          const ex = core.findExercise(d, exerciseId);
+          if (existing) core.updateSession(ex, sessionId, value);
+          else core.addSession(ex, value);
+        });
+        const change = core.sessionChange(core.findExercise(state.data, exerciseId));
+        if (!existing) toast(change?.dir === 'up' ? `Session logged ✓  ${change.text}` : 'Session logged ✓');
+        return null;
+      },
+    },
+  );
+}
+
 function openSettings() {
   const c = state.config ?? {};
   openDialog(
@@ -896,6 +1216,25 @@ function deleteAttempt(activityId, attemptId) {
   toast('Attempt deleted', {
     action: 'Undo',
     onAction: () => commit((d) => core.insertAt(core.findActivity(d, activityId).attempts, removed.item, removed.index)),
+  });
+}
+
+function deleteExercise(id) {
+  const removed = commit((d) => core.removeById(d.exercises, id));
+  if (!removed) return;
+  location.hash = '#/exercises';
+  toast(`Deleted “${removed.item.name}”`, {
+    action: 'Undo',
+    onAction: () => commit((d) => core.insertAt(d.exercises, removed.item, removed.index)),
+  });
+}
+
+function deleteSession(exerciseId, sessionId) {
+  const removed = commit((d) => core.removeById(core.findExercise(d, exerciseId).sessions, sessionId));
+  if (!removed) return;
+  toast('Session deleted', {
+    action: 'Undo',
+    onAction: () => commit((d) => core.insertAt(core.findExercise(d, exerciseId).sessions, removed.item, removed.index)),
   });
 }
 
@@ -981,7 +1320,8 @@ function showWhatsNew(current, previous) {
       <div class="wn-flame" aria-hidden="true">🔥</div>
       <p class="wn-kicker">${previous ? `Updated from ${esc(previous)}` : 'Update complete'}</p>
       <h2>You’re on ${esc(current.number)}</h2>
-      <p class="sub">${esc(current.title)} · ${fmtDate(current.date)}</p>
+      <p class="wn-title">${esc(current.title)}</p>
+      <p class="sub">${fmtDate(current.date)}</p>
       <ul class="wn-list">${current.changes.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>
       <div class="dlg-actions">
         <a class="link" href="#/versions" data-wn-history>See Version History</a>
@@ -1051,7 +1391,7 @@ function onViewClick(e) {
   if (state.suppressClick || e.target.closest('.drag-handle')) return;
   const el = e.target.closest('[data-action]');
   if (!el) return;
-  const { action, id, attempt } = el.dataset;
+  const { action, id, attempt, session } = el.dataset;
   switch (action) {
     case 'open':
       location.hash = `#/activity/${id}`;
@@ -1079,6 +1419,27 @@ function onViewClick(e) {
       break;
     case 'delete-attempt':
       deleteAttempt(id, attempt);
+      break;
+    case 'open-exercise':
+      location.hash = `#/exercise/${id}`;
+      break;
+    case 'new-exercise':
+      openExerciseDialog();
+      break;
+    case 'edit-exercise':
+      openExerciseDialog(id);
+      break;
+    case 'delete-exercise':
+      deleteExercise(id);
+      break;
+    case 'log-session':
+      openSessionDialog(id);
+      break;
+    case 'edit-session':
+      openSessionDialog(id, session);
+      break;
+    case 'delete-session':
+      deleteSession(id, session);
       break;
     case 'delete-idea':
       deleteIdea(id);
@@ -1178,7 +1539,7 @@ view.addEventListener('submit', onViewSubmit);
 view.addEventListener('keydown', onViewKeydown);
 view.addEventListener('pointerdown', onDragStart);
 
-addBtn.addEventListener('click', () => openActivityDialog());
+addBtn.addEventListener('click', () => (parseRoute().name === 'exercises' ? openExerciseDialog() : openActivityDialog()));
 statusEl.addEventListener('click', () => {
   if (state.status === 'error' || state.status === 'pending' || state.status === 'offline') {
     if (isConfigured()) pull();

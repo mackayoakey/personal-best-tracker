@@ -4,7 +4,7 @@ export const SCHEMA_VERSION = 1;
 const DAY_MS = 86400000;
 
 export function emptyData() {
-  return { version: SCHEMA_VERSION, activities: [], ideas: [] };
+  return { version: SCHEMA_VERSION, activities: [], ideas: [], exercises: [] };
 }
 
 export function newId() {
@@ -89,15 +89,14 @@ export function currentBest(activity) {
   return best;
 }
 
-// Least-squares trend of results over time.
-// status: 'none' (fewer than two attempts) | 'flat' | 'on-track' | 'off-track'
-export function trend(activity) {
-  const sorted = sortAttempts(activity.attempts);
-  const useDays = new Set(sorted.map((t) => t.date)).size > 1;
-  const points = sorted.map((t, i) => ({
+// Least-squares trend over a list of { id, date, y } items (already in date order).
+// status: 'none' (fewer than two items) | 'flat' | 'on-track' | 'off-track'
+function buildTrend(items, direction) {
+  const useDays = new Set(items.map((t) => t.date)).size > 1;
+  const points = items.map((t, i) => ({
     id: t.id,
     date: t.date,
-    y: t.result,
+    y: t.y,
     x: useDays ? dayNumber(t.date) : i,
   }));
   if (points.length < 2) return { status: 'none', slope: null, intercept: null, points };
@@ -116,8 +115,13 @@ export function trend(activity) {
 
   let status;
   if (Math.abs(slope) < 1e-9) status = 'flat';
-  else status = (activity.direction === 'lower' ? slope < 0 : slope > 0) ? 'on-track' : 'off-track';
+  else status = (direction === 'lower' ? slope < 0 : slope > 0) ? 'on-track' : 'off-track';
   return { status, slope, intercept, points };
+}
+
+export function trend(activity) {
+  const items = sortAttempts(activity.attempts).map((t) => ({ id: t.id, date: t.date, y: t.result }));
+  return buildTrend(items, activity.direction);
 }
 
 // How far the current best has moved from the baseline toward the target (0 to 1).
@@ -228,6 +232,178 @@ export function updateAttempt(activity, attemptId, input) {
   return attempt;
 }
 
+// ---------- exercises ----------
+// An exercise is something you like to track (for example "Incline smith bench").
+// It holds sessions, and each session holds sets of { reps, weight }.
+
+export function findExercise(data, id) {
+  return (data.exercises ?? []).find((e) => e.id === id);
+}
+
+export function parseExerciseInput(raw) {
+  const name = String(raw.name ?? '').trim();
+  if (!name) return { error: 'Give the exercise a name.' };
+  return {
+    value: {
+      name,
+      unit: raw.unit === 'kg' ? 'kg' : 'lb',
+      notes: String(raw.notes ?? '').trim(),
+    },
+  };
+}
+
+export function createExercise(data, input) {
+  const exercise = { id: newId(), ...input, sessions: [], createdAt: Date.now() };
+  data.exercises.push(exercise);
+  return exercise;
+}
+
+export function updateExercise(exercise, input) {
+  Object.assign(exercise, input);
+  return exercise;
+}
+
+// raw: { date, notes, sets: [{ reps, weight }] }. Empty rows are ignored; a blank weight means bodyweight.
+export function parseSessionInput(raw) {
+  if (!isISODate(raw.date)) return { error: 'Pick a valid date.' };
+  const sets = [];
+  for (const row of raw.sets ?? []) {
+    if (blank(row.reps) && blank(row.weight)) continue;
+    const reps = toNumber(row.reps);
+    const weight = blank(row.weight) ? 0 : Number(row.weight);
+    if (reps === null || !Number.isFinite(reps) || reps <= 0) return { error: 'Each set needs a number of reps.' };
+    if (!Number.isFinite(weight) || weight < 0) return { error: 'Weight must be zero or more.' };
+    sets.push({ reps, weight });
+  }
+  if (!sets.length) return { error: 'Add at least one set.' };
+  return { value: { date: raw.date, sets, notes: String(raw.notes ?? '').trim() } };
+}
+
+export function addSession(exercise, input) {
+  const session = { id: newId(), date: input.date, sets: input.sets, notes: input.notes ?? '', createdAt: Date.now() };
+  exercise.sessions.push(session);
+  return session;
+}
+
+export function updateSession(exercise, sessionId, input) {
+  const session = exercise.sessions.find((s) => s.id === sessionId);
+  if (!session) return null;
+  Object.assign(session, input);
+  return session;
+}
+
+export function sortSessions(sessions) {
+  return sortAttempts(sessions);
+}
+
+// The top set is the heaviest set, and the most reps at that weight.
+export function sessionStats(session) {
+  let topWeight = 0;
+  let topReps = 0;
+  let volume = 0;
+  let totalReps = 0;
+  for (const s of session.sets) {
+    if (s.weight > topWeight || (s.weight === topWeight && s.reps > topReps)) {
+      topWeight = s.weight;
+      topReps = s.reps;
+    }
+    volume += s.weight * s.reps;
+    totalReps += s.reps;
+  }
+  return { topWeight, topReps, volume, totalReps, setCount: session.sets.length };
+}
+
+// Positive when stats a is a better top set than stats b.
+function compareTopSets(a, b) {
+  if (a.topWeight !== b.topWeight) return a.topWeight - b.topWeight;
+  return a.topReps - b.topReps;
+}
+
+export function usesWeight(exercise) {
+  return exercise.sessions.some((s) => s.sets.some((x) => x.weight > 0));
+}
+
+export function lastSession(exercise) {
+  const sorted = sortSessions(exercise.sessions);
+  return sorted[sorted.length - 1] ?? null;
+}
+
+// The best session so far, judged by top set.
+export function bestSession(exercise) {
+  let best = null;
+  let bestStats = null;
+  for (const s of sortSessions(exercise.sessions)) {
+    const st = sessionStats(s);
+    if (!best || compareTopSets(st, bestStats) > 0) {
+      best = s;
+      bestStats = st;
+    }
+  }
+  return best ? { session: best, stats: bestStats } : null;
+}
+
+// How the latest session compares with the one before it.
+// Returns null with fewer than two sessions, otherwise { dir: 'up' | 'down' | 'same', text }.
+export function sessionChange(exercise) {
+  const sorted = sortSessions(exercise.sessions);
+  if (sorted.length < 2) return null;
+  const a = sessionStats(sorted[sorted.length - 1]);
+  const b = sessionStats(sorted[sorted.length - 2]);
+  const signed = (n) => `${n > 0 ? '+' : '−'}${Math.abs(Number(n.toFixed(2)))}`;
+  const dirOf = (n) => (n > 0 ? 'up' : 'down');
+  if (a.topWeight !== b.topWeight) {
+    const d = a.topWeight - b.topWeight;
+    return { dir: dirOf(d), text: `${signed(d)} ${exercise.unit} on your top set` };
+  }
+  if (a.topReps !== b.topReps) {
+    const d = a.topReps - b.topReps;
+    return { dir: dirOf(d), text: `${signed(d)} rep${Math.abs(d) === 1 ? '' : 's'} on your top set` };
+  }
+  if (a.volume !== b.volume) {
+    const d = a.volume - b.volume;
+    return { dir: dirOf(d), text: `${signed(d)} ${exercise.unit} total volume` };
+  }
+  return { dir: 'same', text: 'Same as last time' };
+}
+
+// One point per session: the top weight, or the top reps for bodyweight exercises.
+export function exerciseTrend(exercise) {
+  const weighted = usesWeight(exercise);
+  const items = sortSessions(exercise.sessions).map((s) => {
+    const st = sessionStats(s);
+    return { id: s.id, date: s.date, y: weighted ? st.topWeight : st.topReps };
+  });
+  return { ...buildTrend(items, 'higher'), weighted };
+}
+
+// ---------- activity heat map ----------
+
+// Every date with at least one logged attempt or exercise session.
+export function loggedDates(data) {
+  const dates = new Set();
+  for (const a of data.activities) for (const t of a.attempts) dates.add(t.date);
+  for (const e of data.exercises ?? []) for (const s of e.sessions) dates.add(s.date);
+  return dates;
+}
+
+// Calendar weeks (Monday first), oldest first, ending with the week that holds today.
+// Each day: { date, logged, weekend, future, today }.
+export function heatmapWeeks(logged, weeks = 6, now = new Date()) {
+  const today = todayISO(now);
+  const sinceMonday = (now.getDay() + 6) % 7;
+  const out = [];
+  for (let w = weeks - 1; w >= 0; w--) {
+    const days = [];
+    for (let d = 0; d < 7; d++) {
+      const offset = -(sinceMonday + w * 7) + d;
+      const date = todayISO(new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset));
+      days.push({ date, logged: logged.has(date), weekend: d >= 5, future: date > today, today: date === today });
+    }
+    out.push(days);
+  }
+  return out;
+}
+
 // ---------- ideas ----------
 
 export function newIdea(text) {
@@ -279,5 +455,17 @@ export function normalizeData(raw) {
         .map((i) => ({ id: i.id ?? newId(), text: i.text, createdAt: Number(i.createdAt) || Date.now() }))
     : [];
 
-  return { version: SCHEMA_VERSION, activities, ideas };
+  const exercises = Array.isArray(raw.exercises)
+    ? raw.exercises
+        .filter((e) => e && typeof e.name === 'string' && e.name.trim())
+        .map((e) => ({
+          ...e,
+          id: e.id ?? newId(),
+          unit: e.unit === 'kg' ? 'kg' : 'lb',
+          notes: e.notes ?? '',
+          sessions: Array.isArray(e.sessions) ? e.sessions.filter((s) => s && Array.isArray(s.sets)) : [],
+        }))
+    : [];
+
+  return { version: SCHEMA_VERSION, activities, ideas, exercises };
 }

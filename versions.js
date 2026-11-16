@@ -1,6 +1,20 @@
 // Newest first. Add a new entry at the top each time the app changes.
 export const VERSIONS = [
   {
+    number: 'V5',
+    date: '2026-11-16',
+    title: 'Exercises, heat map, and a calmer look',
+    changes: [
+      'New Exercises section: add the exercises you like to track, separate from your Bests. Log a session with a date, any number of sets (weight and reps for each), and notes.',
+      'Each exercise shows how your latest session compares with the one before, plus a trend chart and full history, with edit and delete with undo.',
+      'New activity heat map: the last six weeks at a glance, simply showing whether you logged anything each day. Weekends are grayed out but still light up if you log on them.',
+      'Muted dark background, less warm than before.',
+      'The title is now just “Bests”, with the flame logo beside it.',
+      'Menu emojis removed, and an Exercises link added.',
+      'Version History entries are now two lines: the title, then the date.',
+    ],
+  },
+  {
     number: 'V4',
     date: '2026-11-16',
     title: 'Update pop-up and a friendlier look',
