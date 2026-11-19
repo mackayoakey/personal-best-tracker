@@ -1,6 +1,20 @@
 // Newest first. Add a new entry at the top each time the app changes.
 export const VERSIONS = [
   {
+    number: 'V13',
+    date: '2026-11-19',
+    title: 'Personal Best, Year Best, and yearly goals',
+    changes: [
+      'Every Best now shows two records: your Personal Best (all time) and your Year Best, labeled with the year, like “2026 Best”. On January 1 it becomes “2027 Best” and starts fresh.',
+      'Your target is now a goal for the year. Only attempts in that year count toward it, and the card shows “2026 Goal”.',
+      'Beating your Old Best is its own goal and is tracked automatically.',
+      'When a new year starts, last year’s goal is saved with whether you reached it. Set a new goal any time, or reuse last year’s target with one tap.',
+      'Best pages have a Past Years list with each year’s best and goal result.',
+      'The trend chart has a This Year / All Time switch.',
+      'The Records page and celebrations now call out new Personal Bests and new Year Bests.',
+    ],
+  },
+  {
     number: 'V12',
     date: '2026-11-16',
     title: 'Simpler header, heat map with day details',

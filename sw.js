@@ -1,6 +1,6 @@
 // Service worker: caches the app shell so the app opens offline.
 // GitHub API calls are cross-origin and always go straight to the network.
-const CACHE = 'pbt-v12';
+const CACHE = 'pbt-v13';
 const SHELL = [
   './',
   'index.html',

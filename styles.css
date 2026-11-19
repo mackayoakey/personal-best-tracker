@@ -614,3 +614,6 @@ button.heat-cell.future { cursor: default; }
 #add-btn { font-size: 1.3rem; line-height: 1; padding: 6px 14px; }
 .day-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; text-align: left; }
 .day-list a { color: var(--text); text-decoration: none; }
+.panel-head .chips { flex: 0 1 auto; }
+.year-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.year-list li { display: grid; grid-template-columns: 52px auto 1fr; gap: 10px; align-items: baseline; }

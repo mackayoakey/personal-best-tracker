@@ -177,8 +177,9 @@ function buildTrend(items, direction) {
   return { status, slope, intercept, points, useDays };
 }
 
-export function trend(activity) {
-  const items = sortAttempts(newAttempts(activity)).map((t) => ({ id: t.id, date: t.date, y: t.result }));
+export function trend(activity, { year = null } = {}) {
+  const list = newAttempts(activity).filter((t) => year === null || yearOf(t.date) === year);
+  const items = sortAttempts(list).map((t) => ({ id: t.id, date: t.date, y: t.result }));
   return buildTrend(items, activity.direction);
 }
 
@@ -218,18 +219,102 @@ export function oldBestStatus(activity) {
   return { hasOld: true, beaten, gap: nb && !beaten ? Math.abs(ob.value - nb.value) : null };
 }
 
-// How far your New Best has moved toward the target, starting from your first new attempt (0 to 1).
-// The target only counts as reached when a new attempt reaches it.
+// ---------- years ----------
+// Every activity has two records: the Personal Best (all time) and a Year Best (one calendar year).
+// Both are worked out from the attempts (and the Old Best), so nothing extra is stored.
+
+export const yearOf = (iso) => Number(String(iso).slice(0, 4));
+export const currentYear = (today = todayISO()) => yearOf(today);
+
+// The best result of all time.
+export const personalBest = (activity) => currentBest(activity);
+
+// The best result within one calendar year. The Old Best counts if it was set in that year.
+export function yearBest(activity, year = currentYear()) {
+  let best =
+    activity.startBest && yearOf(activity.startBest.date) === year
+      ? { value: activity.startBest.value, date: activity.startBest.date, source: 'start', attemptId: null, year }
+      : null;
+  for (const t of sortAttempts(activity.attempts)) {
+    if (yearOf(t.date) === year && (!best || isBetter(t.result, best.value, activity.direction))) {
+      best = { value: t.result, date: t.date, source: 'attempt', attemptId: t.id, year };
+    }
+  }
+  return best;
+}
+
+// The best of everything logged before this attempt (optionally only within one year). null when there is nothing earlier.
+function bestBefore(activity, attempt, year = null) {
+  const ok = (date) => year === null || yearOf(date) === year;
+  let best = activity.startBest && ok(activity.startBest.date) ? activity.startBest.value : null;
+  for (const o of sortAttempts(activity.attempts)) {
+    if (o.id === attempt.id) break;
+    if (ok(o.date) && (best === null || isBetter(o.result, best, activity.direction))) best = o.result;
+  }
+  return best;
+}
+
+// Earlier years, newest first: { year, best, goal } where goal is that year's archived goal (or null).
+export function pastYears(activity, today = todayISO()) {
+  const now = currentYear(today);
+  const history = activity.goalHistory ?? [];
+  const years = new Set(activity.attempts.map((t) => yearOf(t.date)));
+  if (activity.startBest) years.add(yearOf(activity.startBest.date));
+  for (const h of history) years.add(h.year);
+  return [...years]
+    .filter((y) => y < now)
+    .sort((a, b) => b - a)
+    .map((year) => ({ year, best: yearBest(activity, year), goal: history.find((h) => h.year === year) ?? null }));
+}
+
+// ---------- the year goal ----------
+// The target is a goal for one calendar year (goalYear). Only new attempts dated in that year count toward it.
+
+export const goalYear = (activity) => activity.goalYear ?? currentYear();
+export const goalAttempts = (activity) => newAttempts(activity).filter((t) => yearOf(t.date) === goalYear(activity));
+
+// The best attempt that counts toward the year goal.
+export function goalBest(activity) {
+  let best = null;
+  for (const t of sortAttempts(goalAttempts(activity))) {
+    if (!best || isBetter(t.result, best.value, activity.direction)) best = { value: t.result, date: t.date, attemptId: t.id };
+  }
+  return best;
+}
+
+// When a new year starts, last year's goal moves into goalHistory with its outcome and the year starts with no goal.
+export function rolloverGoal(activity, today = todayISO()) {
+  const year = currentYear(today);
+  if (activity.target == null) {
+    activity.goalYear = null;
+    return activity;
+  }
+  if (activity.goalYear == null) activity.goalYear = year;
+  if (activity.goalYear < year) {
+    refreshFlags(activity);
+    const entry = { year: activity.goalYear, target: activity.target, goalDate: activity.goalDate ?? null, reached: Boolean(activity.reachedGoal) };
+    activity.goalHistory = [...(activity.goalHistory ?? []).filter((h) => h.year !== entry.year), entry].sort((a, b) => b.year - a.year);
+    activity.target = null;
+    activity.goalDate = null;
+    activity.reachedGoal = false;
+    activity.goalYear = null;
+    activity.milestones = [];
+  }
+  return activity;
+}
+
+// How far your Year Best has moved toward the year goal, starting from your first attempt of the year (0 to 1).
+// The goal only counts as reached when an attempt in that year reaches it.
 export function progress(activity) {
   if (activity.trackOnly || activity.target == null) return null;
-  const news = sortAttempts(newAttempts(activity));
-  const nb = newBest(activity);
-  const ref = nb ?? oldBest(activity);
+  const news = sortAttempts(goalAttempts(activity));
+  const gb = goalBest(activity);
+  const ref = gb ?? currentBest(activity);
   if (!ref) return null;
   const baseline = news[0]?.result ?? ref.value;
   const sign = activity.direction === 'lower' ? -1 : 1;
   const needed = sign * (activity.target - baseline);
-  const covered = nb ? sign * (nb.value - baseline) : 0;
+  const covered = gb ? sign * (gb.value - baseline) : 0;
   const met = news.some((t) => meetsTarget(t.result, activity.target, activity.direction));
   const fraction = needed <= 0 ? (met ? 1 : 0) : Math.min(1, Math.max(0, covered / needed));
   return { fraction, met, gap: met ? 0 : Math.abs(activity.target - ref.value) };
@@ -247,7 +332,7 @@ export function targetBehindRecord(activity) {
 // When the trend line would cross the target, if you are on track and it is within three years.
 export function projectedDate(activity, today = todayISO()) {
   if (activity.trackOnly || activity.target == null) return null;
-  if (newAttempts(activity).some((t) => meetsTarget(t.result, activity.target, activity.direction))) return null;
+  if (goalAttempts(activity).some((t) => meetsTarget(t.result, activity.target, activity.direction))) return null;
   const tr = trend(activity);
   if (!tr.useDays || tr.status !== 'on-track' || !tr.slope) return null;
   // Too little data makes a pace guess meaningless: need 3+ attempts spread over 2+ weeks.
@@ -260,7 +345,7 @@ export function projectedDate(activity, today = todayISO()) {
 }
 
 // Flags only switch on. Track-only activities never have goal flags.
-// "Beaten" means a new attempt beat the Old Best. "Reached goal" means a new attempt reached the target.
+// "Beaten" means a new attempt beat the Old Best. "Reached goal" means an attempt this goal year reached the year goal.
 export function refreshFlags(activity) {
   if (activity.trackOnly) {
     activity.beaten = false;
@@ -268,7 +353,7 @@ export function refreshFlags(activity) {
     return activity;
   }
   if (oldBestStatus(activity).beaten) activity.beaten = true;
-  if (activity.target != null && newAttempts(activity).some((t) => meetsTarget(t.result, activity.target, activity.direction))) {
+  if (activity.target != null && goalAttempts(activity).some((t) => meetsTarget(t.result, activity.target, activity.direction))) {
     activity.reachedGoal = true;
   }
   return activity;
@@ -359,6 +444,8 @@ export function parseActivityInput(raw) {
 
   const goalDate = blank(raw.goalDate) ? null : raw.goalDate;
   if (goalDate && !isISODate(goalDate)) return { error: 'Goal date is not valid.' };
+  const year = currentYear();
+  if (!trackOnly && goalDate && yearOf(goalDate) !== year) return { error: `The goal date must be in ${year}, because this is your ${year} goal.` };
 
   const startP = parseValue(raw.startValue, unit);
   if (startP.error) return { error: `Old Best: ${startP.error}` };
@@ -373,6 +460,7 @@ export function parseActivityInput(raw) {
       direction: raw.direction === 'lower' ? 'lower' : 'higher',
       trackOnly,
       target: trackOnly ? null : target,
+      goalYear: trackOnly || target === null ? null : year,
       goalDate: trackOnly ? null : goalDate,
       startBest: startValue === null ? null : { value: startValue, date: startDate },
     },
@@ -388,7 +476,7 @@ export function parseAttemptInput(raw, unit = '') {
 }
 
 export function createActivity(data, input) {
-  const activity = { id: newId(), ...input, beaten: false, reachedGoal: false, attempts: [], createdAt: Date.now() };
+  const activity = { id: newId(), ...input, beaten: false, reachedGoal: false, goalHistory: [], attempts: [], createdAt: Date.now() };
   data.activities.push(activity);
   return refreshFlags(activity);
 }
@@ -399,16 +487,17 @@ export function updateActivity(activity, input) {
 }
 
 const metTarget = (activity) =>
-  !activity.trackOnly && activity.target != null && newAttempts(activity).some((t) => meetsTarget(t.result, activity.target, activity.direction));
+  !activity.trackOnly && activity.target != null && goalAttempts(activity).some((t) => meetsTarget(t.result, activity.target, activity.direction));
 
 // Returns { attempt, newRecord, events }. events says what this attempt achieved:
-// beatOld (first time beating the Old Best), target (first time reaching it), milestone (a value), newBest (improved your New Best).
+// beatOld (first time beating the Old Best), target (first time reaching the year goal), milestone (a value),
+// personalBest (a new all-time best), yearBest (a new best for that attempt's year).
 export function addAttempt(activity, input) {
   const before = {
     best: currentBest(activity),
     beaten: oldBestStatus(activity).beaten,
     met: metTarget(activity),
-    nb: newBest(activity),
+    yb: yearBest(activity, yearOf(input.date)),
     ms: new Set(milestoneStatus(activity).rows.filter((r) => r.reached).map((r) => r.value)),
   };
   const attempt = {
@@ -422,13 +511,14 @@ export function addAttempt(activity, input) {
   activity.attempts.push(attempt);
   refreshFlags(activity);
   const after = currentBest(activity);
-  const nbAfter = newBest(activity);
+  const ybAfter = yearBest(activity, yearOf(attempt.date));
   const newlyReached = activity.trackOnly ? [] : milestoneStatus(activity).rows.filter((r) => r.reached && !before.ms.has(r.value));
   const events = {
     target: !before.met && metTarget(activity),
     beatOld: !before.beaten && oldBestStatus(activity).beaten,
     milestone: newlyReached.length ? newlyReached[newlyReached.length - 1].value : null,
-    newBest: Boolean(before.nb) && nbAfter?.attemptId === attempt.id,
+    personalBest: Boolean(before.best) && after.attemptId === attempt.id,
+    yearBest: Boolean(before.yb) && ybAfter?.attemptId === attempt.id,
   };
   const newRecord = Boolean(before.best) && after.attemptId === attempt.id;
   return { attempt, newRecord, events };
@@ -632,7 +722,7 @@ export function tagInsight(activity) {
 }
 
 // ---------- milestones ----------
-// Smaller steps on the way to the target. They count when a new attempt reaches them.
+// Smaller steps on the way to the year goal. They count when an attempt in the goal year reaches them.
 
 export function sortMilestones(activity, list) {
   return [...list].sort((a, b) => (activity.direction === 'lower' ? b - a : a - b));
@@ -651,7 +741,7 @@ export function parseMilestones(text, unit) {
 
 export function milestoneStatus(activity) {
   const list = sortMilestones(activity, activity.milestones ?? []);
-  const news = newAttempts(activity);
+  const news = goalAttempts(activity);
   const rows = list.map((value) => ({ value, reached: news.some((t) => meetsTarget(t.result, value, activity.direction)) }));
   const next = rows.find((r) => !r.reached) ?? null;
   return { rows, next, reachedCount: rows.filter((r) => r.reached).length };
@@ -660,7 +750,7 @@ export function milestoneStatus(activity) {
 // Three evenly spaced steps between where you are and the target.
 export function suggestMilestones(activity) {
   if (activity.target == null) return [];
-  const ref = (newBest(activity) ?? oldBest(activity))?.value;
+  const ref = (goalBest(activity) ?? currentBest(activity))?.value;
   if (ref == null || meetsTarget(ref, activity.target, activity.direction)) return [];
   const out = [];
   for (const k of [1, 2, 3]) {
@@ -709,22 +799,24 @@ export function recordsLog(data) {
   const out = [];
   for (const a of data.activities) {
     const ob = oldBest(a);
-    let running = null;
     let beaten = false;
-    let reached = false;
-    let first = true;
+    const goals = [
+      ...(a.goalHistory ?? []).map((h) => ({ year: h.year, target: h.target, reached: false })),
+      ...(!a.trackOnly && a.target != null ? [{ year: goalYear(a), target: a.target, reached: false }] : []),
+    ];
     for (const t of sortAttempts(newAttempts(a))) {
-      const improves = !first && running && isBetter(t.result, running.result, a.direction);
+      const year = yearOf(t.date);
       const beatsOld = !beaten && ob && isBetter(t.result, ob.value, a.direction);
-      const hitsTarget = !reached && !a.trackOnly && a.target != null && meetsTarget(t.result, a.target, a.direction);
-      if (!running || isBetter(t.result, running.result, a.direction)) running = t;
-      first = false;
+      const hit = goals.find((g) => !g.reached && g.year === year && meetsTarget(t.result, g.target, a.direction));
+      const pbPrev = bestBefore(a, t);
+      const yearPrev = bestBefore(a, t, year);
       if (beatsOld) beaten = true;
-      if (hitsTarget) reached = true;
+      if (hit) hit.reached = true;
       const badges = [];
       if (beatsOld) badges.push('Beat Old Best');
-      if (hitsTarget) badges.push('Target Reached');
-      if (!badges.length && improves) badges.push('New Best');
+      if (hit) badges.push(`${year} Goal Reached`);
+      if (!badges.length && pbPrev !== null && isBetter(t.result, pbPrev, a.direction)) badges.push('New Personal Best');
+      else if (!badges.length && yearPrev !== null && isBetter(t.result, yearPrev, a.direction)) badges.push(`New ${year} Best`);
       if (badges.length) out.push({ kind: 'best', id: a.id, name: a.name, date: t.date, createdAt: t.createdAt ?? 0, value: t.result, unit: a.unit, badges, tags: t.tags ?? [] });
     }
   }
@@ -813,7 +905,7 @@ export function formatIdeasForClaude(ideas, today) {
 
 // ---------- stored data ----------
 
-export function normalizeData(raw) {
+export function normalizeData(raw, today = todayISO()) {
   if (!raw || typeof raw !== 'object' || !Array.isArray(raw.activities)) return emptyData();
 
   const activities = raw.activities.map((a) => ({
@@ -827,9 +919,14 @@ export function normalizeData(raw) {
     trackOnly: Boolean(a.trackOnly),
     beaten: Boolean(a.beaten),
     reachedGoal: Boolean(a.reachedGoal),
+    goalYear: a.target != null ? Number(a.goalYear) || currentYear(today) : null,
+    goalHistory: (Array.isArray(a.goalHistory) ? a.goalHistory : [])
+      .filter((h) => h && Number.isFinite(Number(h.year)) && Number.isFinite(Number(h.target)))
+      .map((h) => ({ year: Number(h.year), target: Number(h.target), goalDate: h.goalDate ?? null, reached: Boolean(h.reached) })),
     archived: Boolean(a.archived),
     milestones: (Array.isArray(a.milestones) ? a.milestones : []).map(Number).filter(Number.isFinite),
   }));
+  for (const a of activities) rolloverGoal(a, today);
 
   const ideas = Array.isArray(raw.ideas)
     ? raw.ideas

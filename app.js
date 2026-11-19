@@ -38,6 +38,7 @@ const state = {
   exView: readJSON(VIEW_KEY, 'tile'),
   bView: readJSON('pbt.bestsView', 'tile'),
   exFilter: '',
+  chartRange: 'year', // trend chart range: this year or all time
   tagFilter: '',
   bQ: '',
   bSort: 'manual',
@@ -243,15 +244,15 @@ function badges(a) {
   const items = [];
   if (a.trackOnly) items.push('📈 Track Only');
   if (a.beaten) items.push('🏆 Old Best Beaten');
-  if (a.reachedGoal) items.push('🎯 Goal Reached');
+  if (a.reachedGoal) items.push(`🎯 ${core.goalYear(a)} Goal Reached`);
   return items.map((t) => `<span class="badge">${t}</span>`).join('');
 }
 
 function progressView(prog, a) {
   const pct = Math.round(prog.fraction * 100);
   return `
-    <div class="progress" role="img" aria-label="${pct} percent of the way to target"><span style="width:${pct}%"></span></div>
-    <p class="sub">${prog.met ? 'Target reached 🎉' : `${fmtValue(Number(prog.gap.toFixed(4)), a.unit)} to your target`}</p>`;
+    <div class="progress" role="img" aria-label="${pct} percent of the way to your ${core.goalYear(a)} goal"><span style="width:${pct}%"></span></div>
+    <p class="sub">${prog.met ? `${core.goalYear(a)} goal reached 🎉` : `${fmtValue(Number(prog.gap.toFixed(4)), a.unit)} to your ${core.goalYear(a)} goal`}</p>`;
 }
 
 // Shown when the target is already behind the starting record: usually "lower or higher is better" is the wrong way round.
@@ -470,31 +471,28 @@ function goalButtonLabel(a) {
   return a.trackOnly || a.target == null ? '🎯 Set a Goal' : '🎯 Edit Goal';
 }
 
-// Old Best, New Best, and Target side by side. Old Best is hidden when there is no old record.
+// Personal Best, this year's Best, and this year's Goal side by side.
 function recordStats(a, left, withDates = true) {
-  const ob = core.oldBest(a);
-  const nb = core.newBest(a);
+  const year = core.currentYear();
+  const pb = core.personalBest(a);
+  const yb = core.yearBest(a, year);
   const target = a.trackOnly ? 'None' : a.target == null ? '—' : fmtValueHTML(a.target, a.unit);
-  const cols = [];
-  if (ob) {
-    cols.push(`<div><span class="label">Old Best</span><span class="value">${fmtValueHTML(ob.value, a.unit)}</span><span class="sub">${fmtDate(ob.date)}</span></div>`);
-  }
-  cols.push(
-    `<div><span class="label">New Best</span><span class="value">${nb ? fmtValueHTML(nb.value, a.unit) : '—'}</span><span class="sub">${nb ? fmtDate(nb.date) : 'No attempts yet'}</span></div>`,
-  );
-  cols.push(
-    `<div><span class="label">Target</span><span class="value">${target}</span>${left !== null && withDates ? `<span class="sub">${daysText(left)}</span>` : ''}</div>`,
-  );
-  return { html: cols.join(''), three: cols.length === 3 };
+  const cols = [
+    `<div><span class="label">Personal Best</span><span class="value">${pb ? fmtValueHTML(pb.value, a.unit) : '—'}</span><span class="sub">${pb ? fmtDate(pb.date) : 'No attempts yet'}</span></div>`,
+    `<div><span class="label">${year} Best</span><span class="value">${yb ? fmtValueHTML(yb.value, a.unit) : '—'}</span><span class="sub">${yb ? fmtDate(yb.date) : `Nothing in ${year} yet`}</span></div>`,
+    `<div><span class="label">${year} Goal</span><span class="value">${target}</span>${left !== null && withDates ? `<span class="sub">${daysText(left)}</span>` : ''}</div>`,
+  ];
+  return { html: cols.join(''), three: true };
 }
 
 // One line on how you are doing against the Old Best.
 function oldBestLine(a) {
   const st = core.oldBestStatus(a);
   if (!st.hasOld) return '';
-  if (st.beaten) return '<p class="since">🏆 You beat your Old Best.</p>';
-  if (st.gap !== null) return `<p class="since">${fmtValue(Number(st.gap.toFixed(4)), a.unit)} to beat your Old Best.</p>`;
-  return '<p class="since">Beat your Old Best with a new attempt.</p>';
+  const old = fmtValue(core.oldBest(a).value, a.unit);
+  if (st.beaten) return `<p class="since">🏆 You beat your Old Best of ${old}.</p>`;
+  if (st.gap !== null) return `<p class="since">${fmtValue(Number(st.gap.toFixed(4)), a.unit)} to beat your Old Best of ${old}.</p>`;
+  return `<p class="since">Beat your Old Best of ${old} with a new attempt.</p>`;
 }
 
 // Short label for the trend of a Best.
@@ -503,10 +501,10 @@ function bestPill(tr) {
   return m ? `<span class="pill ${m[0]}">${m[1]}</span>` : '<span class="pill muted">No Trend Yet</span>';
 }
 
-// One short line: how far to the target and to the Old Best, and days left.
+// One short line: how far to the year goal and to the Old Best, and days left.
 function statusLine(a, prog, left) {
   const parts = [];
-  if (prog) parts.push(prog.met ? 'Target reached 🎉' : `${fmtValue(Number(prog.gap.toFixed(4)), a.unit)} to target`);
+  if (prog) parts.push(prog.met ? `${core.goalYear(a)} goal reached 🎉` : `${fmtValue(Number(prog.gap.toFixed(4)), a.unit)} to ${core.goalYear(a)} goal`);
   const st = core.oldBestStatus(a);
   if (st.hasOld) {
     parts.push(st.beaten ? '🏆 Old Best beaten' : st.gap !== null ? `${fmtValue(Number(st.gap.toFixed(4)), a.unit)} to beat Old Best` : 'Beat your Old Best');
@@ -518,13 +516,15 @@ function statusLine(a, prog, left) {
 }
 
 function miniStats(a) {
-  const ob = core.oldBest(a);
-  const nb = core.newBest(a);
+  const year = core.currentYear();
+  const pb = core.personalBest(a);
+  const yb = core.yearBest(a, year);
   const target = a.trackOnly ? 'None' : a.target == null ? '—' : fmtValueHTML(a.target, a.unit);
-  const cells = [];
-  if (ob) cells.push(`<div><span class="label">Old Best</span><span class="value">${fmtValueHTML(ob.value, a.unit)}</span></div>`);
-  cells.push(`<div><span class="label">New Best</span><span class="value">${nb ? fmtValueHTML(nb.value, a.unit) : '—'}</span></div>`);
-  cells.push(`<div><span class="label">Target</span><span class="value">${target}</span></div>`);
+  const cells = [
+    `<div><span class="label">Personal Best</span><span class="value">${pb ? fmtValueHTML(pb.value, a.unit) : '—'}</span></div>`,
+    `<div><span class="label">${year} Best</span><span class="value">${yb ? fmtValueHTML(yb.value, a.unit) : '—'}</span></div>`,
+    `<div><span class="label">${year} Goal</span><span class="value">${target}</span></div>`,
+  ];
   return `<div class="mini-stats n${cells.length}">${cells.join('')}</div>`;
 }
 
@@ -562,10 +562,10 @@ function cardView(a, today) {
 function bestRow(a, today) {
   const prog = core.progress(a);
   const tr = core.trend(a);
-  const ob = core.oldBest(a);
-  const nb = core.newBest(a);
+  const pb = core.personalBest(a);
+  const yb = core.yearBest(a);
   const pct = prog ? Math.round(prog.fraction * 100) : 0;
-  const sub = [ob ? `Old ${fmtValue(ob.value, a.unit)}` : '', nb ? `New ${fmtValue(nb.value, a.unit)}` : 'No new attempts'].filter(Boolean).join(' · ');
+  const sub = [pb ? `Personal ${fmtValue(pb.value, a.unit)}` : '', yb ? `${core.currentYear()} ${fmtValue(yb.value, a.unit)}` : `No ${core.currentYear()} attempts`].filter(Boolean).join(' · ');
   return `
     <article class="row-card" data-action="open" data-id="${a.id}">
       <div class="row-main">
@@ -594,16 +594,21 @@ function detailView(a) {
   const insight = core.tagInsight(a);
   const ms = core.milestoneStatus(a);
   const oldId = core.oldBest(a)?.attemptId;
-  const newId = core.newBest(a)?.attemptId;
+  const pbId = core.personalBest(a)?.attemptId;
+  const year = core.currentYear();
+  const ybId = core.yearBest(a, year)?.attemptId;
+  const range = state.chartRange === 'all' ? 'all' : 'year';
+  const chartTr = range === 'year' ? core.trend(a, { year }) : tr;
+  const past = core.pastYears(a, today);
 
   const rows = history
     .map(
       (t) => `
-      <li class="attempt${t.id === newId ? ' is-best' : ''}">
+      <li class="attempt${t.id === pbId || t.id === ybId ? ' is-best' : ''}">
         <div class="attempt-main">
           <strong>${fmtValue(t.result, a.unit)}</strong>
           <span class="sub">${fmtDate(t.date)}</span>
-          ${t.id === newId ? '<span class="badge">New Best</span>' : ''}${t.id === oldId ? '<span class="badge">Old Best</span>' : ''}${core.isNewAttempt(t) ? '' : '<span class="sub">(before 11/15/2026)</span>'}
+          ${t.id === pbId ? '<span class="badge">Personal Best</span>' : ''}${t.id === ybId ? `<span class="badge">${year} Best</span>` : ''}${t.id === oldId ? '<span class="badge">Old Best</span>' : ''}${core.isNewAttempt(t) ? '' : '<span class="sub">(before 11/15/2026)</span>'}
         </div>
         ${t.notes ? `<p class="notes">${esc(t.notes)}</p>` : ''}
         ${tagChipsHTML(t.tags)}
@@ -639,17 +644,29 @@ function detailView(a) {
 
     <section class="panel goal-panel">
       <div class="panel-head">
-        <h2>🎯 Goal</h2>
+        <h2>🎯 ${year} Goal</h2>
         <button class="btn small" data-action="set-goal" data-id="${a.id}">${goalButtonLabel(a).replace('🎯 ', '')}</button>
       </div>
       <p class="sub">${
         a.trackOnly
-          ? 'This activity is track only, so there is no target. Set a goal any time to start chasing one.'
+          ? 'This activity is track only, so there is no goal. Set a goal any time to start chasing one.'
           : a.target == null
-            ? 'No goal yet. Pick a target number to see your progress toward it.'
-            : `Working toward ${fmtValue(a.target, a.unit)}${a.goalDate ? ` by ${fmtDate(a.goalDate)}` : ''}. You can change it any time.`
+            ? `No ${year} goal yet. Pick a target to beat this year and see your progress toward it.`
+            : `Working toward ${fmtValue(a.target, a.unit)} in ${year}${a.goalDate ? `, by ${fmtDate(a.goalDate)}` : ''}. You can change it any time.`
       }</p>
     </section>
+
+    ${
+      past.length
+        ? `<section class="panel"><h2>📅 Past Years</h2>
+      <ul class="year-list">${past
+        .map(
+          (y) =>
+            `<li><strong>${y.year}</strong><span>${y.best ? fmtValue(y.best.value, a.unit) : '—'}</span><span class="sub">${y.goal ? `Goal ${fmtValue(y.goal.target, a.unit)} · ${y.goal.reached ? 'reached 🎯' : 'not reached'}` : 'No goal'}</span></li>`,
+        )
+        .join('')}</ul></section>`
+        : ''
+    }
 
     ${
       ms.rows.length
@@ -671,9 +688,12 @@ function detailView(a) {
     </section>
 
     <section class="panel">
-      <h2>📈 Trend</h2>
-      ${a.goalDate && !a.trackOnly ? '<p class="sub">The dotted vertical line is your goal date.</p>' : ''}
-      ${chartView(a, tr)}
+      <div class="panel-head">
+        <h2>📈 Trend</h2>
+        <div class="chips"><button type="button" class="chip${range === 'year' ? ' active' : ''}" data-action="chart-range" data-range="year">This Year</button><button type="button" class="chip${range === 'all' ? ' active' : ''}" data-action="chart-range" data-range="all">All Time</button></div>
+      </div>
+      ${range === 'year' && a.goalDate && !a.trackOnly ? '<p class="sub">The dotted vertical line is your goal date.</p>' : ''}
+      ${chartView(a, chartTr, range)}
     </section>
 
     <section class="panel">
@@ -894,8 +914,9 @@ function exerciseDetailView(e) {
     </section>`;
 }
 
-function chartView(a, tr) {
-  if (!tr.points.length) return '<p class="sub">Log a new attempt to see the trend.</p>';
+function chartView(a, tr, range = 'all') {
+  if (!tr.points.length) return `<p class="sub">${range === 'year' ? `No attempts in ${core.currentYear()} yet. Log one to see the trend.` : 'Log a new attempt to see the trend.'}</p>`;
+  const showGoal = range === 'year' && a.target != null && !a.trackOnly;
 
   const W = 640;
   const H = 300;
@@ -907,7 +928,7 @@ function chartView(a, tr) {
   const xs = tr.points.map((p) => p.x);
   let xMin = Math.min(...xs);
   let xMax = Math.max(...xs);
-  const goalX = a.goalDate && !a.trackOnly && tr.useDays ? core.dayNumber(a.goalDate) : null;
+  const goalX = showGoal && a.goalDate && tr.useDays ? core.dayNumber(a.goalDate) : null;
   if (goalX !== null) xMax = Math.max(xMax, goalX);
   if (xMin === xMax) {
     xMin -= 1;
@@ -915,7 +936,7 @@ function chartView(a, tr) {
   }
 
   const ys = tr.points.map((p) => p.y);
-  if (a.target != null && !a.trackOnly) ys.push(a.target);
+  if (showGoal) ys.push(a.target);
   const oldRef = a.id ? core.oldBest(a) : null;
   if (oldRef) ys.push(oldRef.value);
   let yMin = Math.min(...ys);
@@ -937,7 +958,7 @@ function chartView(a, tr) {
   const refLine = (value, cls, label) =>
     `<line class="${cls}" x1="${L}" x2="${W - R}" y1="${sy(value)}" y2="${sy(value)}"/>` +
     `<text class="ref" x="${L + 6}" y="${sy(value) - 8}" text-anchor="start">${label} ${core.formatValue(value, a.unit)}</text>`;
-  if (a.target != null && !a.trackOnly) out.push(refLine(a.target, 'target', 'Target'));
+  if (showGoal) out.push(refLine(a.target, 'target', `${core.goalYear(a)} Goal`));
   if (oldRef) out.push(refLine(oldRef.value, 'start', 'Old Best'));
 
   if (goalX !== null) {
@@ -1036,7 +1057,7 @@ function recordsView() {
     .join('');
   return `<nav class="crumbs"><a href="#/">← All Activities</a></nav>
     <h1>Records</h1>
-    <p class="sub">Every Old Best beaten, target reached and new best, newest first.</p>
+    <p class="sub">Every Old Best beaten, year goal reached, and new Personal or Year Best, newest first.</p>
     ${log.length ? `<ul class="records">${items}</ul>` : '<p class="sub">No records yet. Your first new best will show up here.</p>'}`;
 }
 
@@ -1472,7 +1493,7 @@ function activityFields(a) {
     { type: 'section', title: '2 · Your Old Best', note: 'Optional. Your best before 11/15/2026, the record you are trying to beat. Attempts you log from 11/15/2026 on count as New Bests.' },
     { name: 'startValue', type: 'value', unit: a?.unit ?? '', label: 'Old Best', value: core.inputText(a?.startBest?.value, a?.unit) },
     { name: 'startDate', type: 'date', label: 'When You Set It', value: a?.startBest?.date ?? core.todayISO() },
-    { type: 'section', title: '3 · Goal', note: 'Choose now, or switch later with the Set a Goal button.' },
+    { type: 'section', title: '3 · Goal', note: `Your goal for ${core.currentYear()}. Choose now, or switch later with the Set a Goal button.` },
     {
       name: 'mode',
       type: 'segmented',
@@ -1486,12 +1507,12 @@ function activityFields(a) {
       name: 'target',
       type: 'value',
       unit: a?.unit ?? '',
-      label: 'Target to Reach',
+      label: `${core.currentYear()} Goal`,
       value: core.inputText(a?.target, a?.unit),
-      hint: 'Optional. For example, 185 when your best is 170.',
+      hint: `Optional. A target to beat this year, for example 185 when your best is 170. Beating your Old Best is its own goal.`,
       when: 'goal',
     },
-    { name: 'goalDate', type: 'date', label: 'Goal Date', value: a?.goalDate ?? '', hint: 'Optional deadline.', when: 'goal' },
+    { name: 'goalDate', type: 'date', label: 'Goal Date', value: a?.goalDate ?? '', hint: `Optional deadline, in ${core.currentYear()}.`, when: 'goal' },
   ];
 }
 
@@ -1549,19 +1570,22 @@ function openGoalDialog(id) {
   if (!a) return;
   const best = core.currentBest(a);
   const hasGoal = !a.trackOnly && a.target != null;
+  const year = core.currentYear();
+  const last = (a.goalHistory ?? [])[0] ?? null;
   openDialog(
-    hasGoal ? `Edit Goal · ${a.name}` : `Set a Goal · ${a.name}`,
+    hasGoal ? `Edit ${year} Goal · ${a.name}` : `Set a ${year} Goal · ${a.name}`,
     [
       {
         name: 'target',
         type: 'value',
         unit: a.unit,
-        label: `Target${a.unit ? ` (${a.unit})` : ''}`,
+        label: `${year} Target${a.unit ? ` (${a.unit})` : ''}`,
         required: true,
         value: a.trackOnly ? '' : core.inputText(a.target, a.unit),
         hint: `${a.direction === 'lower' ? 'Lower' : 'Higher'} is better.${best ? ` Your best so far is ${fmtValue(best.value, a.unit)}.` : ''}`,
       },
-      { name: 'goalDate', type: 'date', label: 'Goal Date', value: a.trackOnly ? '' : (a.goalDate ?? ''), hint: 'Optional deadline.' },
+      ...(last && !hasGoal ? [{ type: 'action', id: 'copylast', label: `↺ Use ${last.year}’s target (${fmtValue(last.target, a.unit)})` }] : []),
+      { name: 'goalDate', type: 'date', label: 'Goal Date', value: a.trackOnly ? '' : (a.goalDate ?? ''), hint: `Optional deadline, in ${year}.` },
       {
         name: 'milestones',
         type: 'textarea',
@@ -1572,14 +1596,15 @@ function openGoalDialog(id) {
       { type: 'action', id: 'suggest', label: '✨ Suggest Milestones' },
     ],
     {
-      message: 'A goal is the number you are working toward. It does not change your attempts or records.',
+      message: `This is your goal for ${year}, measured against your ${year} Best. Beating your Old Best is a separate goal that is tracked automatically. Goals do not change your attempts or records.`,
       submitLabel: 'Save Goal',
       secondary: hasGoal
         ? {
             label: 'Remove Goal',
             onClick: () => {
-              commit((d) => core.updateActivity(core.findActivity(d, id), { trackOnly: true, target: null, goalDate: null, milestones: [] }));
-              toast('Goal removed. This activity is now track only.');
+              const keepsOldBest = Boolean(core.oldBest(a));
+              commit((d) => core.updateActivity(core.findActivity(d, id), { trackOnly: !keepsOldBest, target: null, goalYear: null, goalDate: null, milestones: [] }));
+              toast(keepsOldBest ? `${year} goal removed. Your Old Best goal is still tracked.` : 'Goal removed. This activity is now track only.');
             },
           }
         : null,
@@ -1595,6 +1620,7 @@ function openGoalDialog(id) {
           core.updateActivity(core.findActivity(d, id), {
             trackOnly: false,
             target: base.value.target,
+            goalYear: base.value.goalYear,
             goalDate: base.value.goalDate,
             milestones: core.sortMilestones(a, ms.value),
           }),
@@ -1606,6 +1632,11 @@ function openGoalDialog(id) {
   );
 
   const form = dlg.querySelector('form');
+  form.querySelector('[data-field-action=copylast]')?.addEventListener('click', () => {
+    const input = form.querySelector('[name=target]');
+    input.value = core.inputText(last.target, a.unit);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
   form.querySelector('[data-field-action=suggest]').addEventListener('click', () => {
     const t = core.parseValue(form.querySelector('[name=target]').value, a.unit);
     const target = t.value ?? a.target;
@@ -2078,10 +2109,11 @@ function celebrate(message) {
 // What to say (and whether to celebrate) after an attempt is logged.
 function afterAttempt(activity, result) {
   const ev = result.events;
-  if (ev.target) celebrate(`🎯 Target reached on ${activity.name}!`);
+  if (ev.target) celebrate(`🎯 ${core.goalYear(activity)} goal reached on ${activity.name}!`);
   else if (ev.beatOld) celebrate(`🏆 You beat your Old Best on ${activity.name}!`);
   else if (ev.milestone !== null) celebrate(`⭐ Milestone reached: ${fmtValue(ev.milestone, activity.unit)}`);
-  else if (ev.newBest) celebrate('🔥 New Best!');
+  else if (ev.personalBest) celebrate(`🔥 New Personal Best on ${activity.name}!`);
+  else if (ev.yearBest) celebrate(`🔥 New ${core.yearOf(result.attempt.date)} Best on ${activity.name}!`);
   else toast('Attempt logged ✓');
 }
 
@@ -2218,6 +2250,10 @@ function onViewClick(e) {
       break;
     case 'heat-day':
       showDay(el.dataset.date);
+      break;
+    case 'chart-range':
+      state.chartRange = el.dataset.range === 'all' ? 'all' : 'year';
+      render();
       break;
     case 'tag-filter':
       state.tagFilter = el.dataset.tag;
