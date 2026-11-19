@@ -7,7 +7,11 @@ export const VERSIONS = [
     changes: [
       'New Activity and the other forms now open as a full page that starts at the top of the screen, instead of a small window.',
       'The ✕ and Cancel buttons respond on the first tap, even with the keyboard open.',
-      'The forms no longer scroll sideways.',
+      'The forms no longer scroll sideways, and their Save and Cancel buttons stay at the bottom of the screen.',
+      'The ✕ is larger.',
+      'New Activity is shorter: the Old Best is no longer asked for there. Tap “Add your Old Best” on a Best’s card or page any time, and tap the Old Best line to change it.',
+      'The Log an Attempt form is a single clean column, with the result first.',
+      'The pace message now says when you would reach your goal if that is after the end of the year.',
     ],
   },
   {

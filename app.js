@@ -265,8 +265,14 @@ function directionNotice(a) {
 function paceView(a) {
   const when = core.projectedDate(a);
   if (!when) return '';
-  const vs = a.goalDate ? (when <= a.goalDate ? ' That is ahead of your goal date.' : ' That is behind your goal date.') : '';
-  return `<p class="trend">At this pace you reach your target around ${fmtDate(when)}.${vs}</p>`;
+  const year = core.goalYear(a);
+  const late = core.yearOf(when) > year;
+  const vs = late
+    ? ` That is after the end of ${year}.`
+    : a.goalDate
+      ? when <= a.goalDate ? ' That is ahead of your goal date.' : ' That is behind your goal date.'
+      : '';
+  return `<p class="trend">At this pace you reach your ${year} goal around ${fmtDate(when)}.${vs}</p>`;
 }
 
 // A small trend picture: dots, a dashed trend line, a dotted line at the target, and a dotted vertical line at the goal date.
@@ -485,14 +491,19 @@ function recordStats(a, left, withDates = true) {
   return { html: cols.join(''), three: true };
 }
 
-// One line on how you are doing against the Old Best.
+// One line on how you are doing against the Old Best. Tap it to add or change the Old Best.
 function oldBestLine(a) {
+  const tap = `data-action="edit-oldbest" data-id="${a.id}" role="button" tabindex="0"`;
+  const ob = core.oldBest(a);
+  if (!ob) return `<p class="since tap" ${tap}>No Old Best yet. <span class="link">Add your Old Best</span></p>`;
   const st = core.oldBestStatus(a);
-  if (!st.hasOld) return '';
-  const old = fmtValue(core.oldBest(a).value, a.unit);
-  if (st.beaten) return `<p class="since">🏆 You beat your Old Best of ${old}.</p>`;
-  if (st.gap !== null) return `<p class="since">${fmtValue(Number(st.gap.toFixed(4)), a.unit)} to beat your Old Best of ${old}.</p>`;
-  return `<p class="since">Beat your Old Best of ${old} with a new attempt.</p>`;
+  const old = fmtValue(ob.value, a.unit);
+  const text = st.beaten
+    ? `🏆 You beat your Old Best of ${old}.`
+    : st.gap !== null
+      ? `${fmtValue(Number(st.gap.toFixed(4)), a.unit)} to beat your Old Best of ${old}.`
+      : `Beat your Old Best of ${old} with a new attempt.`;
+  return `<p class="since tap" ${tap}>${text} <span class="link">Edit</span></p>`;
 }
 
 // Short label for the trend of a Best.
@@ -553,6 +564,7 @@ function cardView(a, today) {
         ${prog ? `<div class="progress thin" role="img" aria-label="${pct} percent of the way to target"><span style="width:${pct}%"></span></div>` : ''}
         ${line ? `<p class="sub tight">${line}</p>` : ''}
         ${needsGoal ? '<p class="sub tight">No goal yet. <button class="link" type="button" data-action="set-goal" data-id="' + a.id + '">Set a Goal</button></p>' : ''}
+        ${!core.oldBest(a) && !a.trackOnly ? '<p class="sub tight">No Old Best yet. <button class="link" type="button" data-action="edit-oldbest" data-id="' + a.id + '">Add Old Best</button></p>' : ''}
         ${directionNotice(a)}
         <div class="card-trend">${spark}${bestPill(tr)}</div>
       </div>
@@ -679,9 +691,9 @@ function detailView(a) {
     <section class="panel">
       <h2>＋ Log an Attempt</h2>
       <form class="attempt-form" data-form="attempt-new" data-id="${a.id}">
-        <label>Date<input type="date" name="date" required value="${today}"></label>
         <label>Result${a.unit ? ` (${esc(a.unit)})` : ''}${valueInputHTML('result', a.unit, '', true)}${core.isTimeUnit(a.unit) ? `<small>${esc(core.timeHelp(a.unit))}</small>` : ''}</label>
-        <label class="wide">Notes<textarea name="notes" rows="2" placeholder="Optional"></textarea></label>
+        <label>Date<input type="date" name="date" required value="${today}"></label>
+        <label>Notes<textarea name="notes" rows="2" placeholder="Optional"></textarea></label>
         <details class="wide tags-details"><summary>Add Tags</summary>${tagsFieldHTML([])}</details>
         <button class="btn primary wide" type="submit">Log Attempt</button>
       </form>
@@ -1495,10 +1507,7 @@ function activityFields(a) {
         ['lower', 'A lower number (time, like a sprint)'],
       ],
     },
-    { type: 'section', title: '2 · Your Old Best', note: 'Optional. Your best before 11/15/2026, the record you are trying to beat. Attempts you log from 11/15/2026 on count toward beating it.' },
-    { name: 'startValue', type: 'value', unit: a?.unit ?? '', label: 'Old Best', value: core.inputText(a?.startBest?.value, a?.unit) },
-    { name: 'startDate', type: 'date', label: 'When You Set It', value: a?.startBest?.date ?? core.todayISO() },
-    { type: 'section', title: '3 · Goal', note: `Your goal for ${core.currentYear()}. Choose now, or switch later with the Set a Goal button.` },
+    { type: 'section', title: '2 · Goal', note: `Your goal for ${core.currentYear()}. Choose now, or switch later with the Set a Goal button.` },
     {
       name: 'mode',
       type: 'segmented',
@@ -1531,6 +1540,7 @@ function openActivityDialog(id = null) {
       const unit = comboValue(raw, 'unit');
       const { error, value } = core.parseActivityInput({ ...raw, unit, trackOnly: raw.mode === 'track' });
       if (error) return error;
+      value.startBest = existing?.startBest ?? null; // the Old Best is edited by tapping it on the Best's page
       if (!value.trackOnly && value.target !== null && value.startBest && core.meetsTarget(value.startBest.value, value.target, value.direction)) {
         return BEHIND_RECORD_MSG;
       }
@@ -1568,6 +1578,58 @@ function openActivityDialog(id = null) {
       dirSel.value = core.isTimeUnit(unitSel.value) ? 'lower' : 'higher';
     });
   }
+}
+
+function openOldBestDialog(id) {
+  const a = core.findActivity(state.data, id);
+  if (!a) return;
+  const has = Boolean(a.startBest);
+  openDialog(
+    has ? `Edit Old Best · ${a.name}` : `Add Old Best · ${a.name}`,
+    [
+      {
+        name: 'value',
+        type: 'value',
+        unit: a.unit,
+        label: `Old Best${a.unit ? ` (${a.unit})` : ''}`,
+        required: true,
+        value: core.inputText(a.startBest?.value, a.unit),
+        hint: 'The record you are trying to beat.',
+      },
+      { name: 'date', type: 'date', label: 'When You Set It', value: a.startBest?.date ?? core.todayISO() },
+    ],
+    {
+      message: 'Attempts you log from 11/15/2026 on count toward beating it.',
+      submitLabel: 'Save Old Best',
+      secondary: has
+        ? {
+            label: 'Remove',
+            onClick: () => {
+              commit((d) => {
+                const act = core.findActivity(d, id);
+                act.beaten = false;
+                core.updateActivity(act, { startBest: null });
+              });
+              toast('Old Best removed.');
+            },
+          }
+        : null,
+      onSubmit: (raw) => {
+        const p = core.parseValue(raw.value, a.unit);
+        if (p.error) return p.error;
+        if (p.value === null) return 'Enter your Old Best.';
+        if (!core.isISODate(raw.date)) return 'Pick a valid date.';
+        if (!a.trackOnly && a.target != null && core.meetsTarget(p.value, a.target, a.direction)) return BEHIND_RECORD_MSG;
+        commit((d) => {
+          const act = core.findActivity(d, id);
+          act.beaten = false;
+          core.updateActivity(act, { startBest: { value: p.value, date: raw.date } });
+        });
+        toast('Old Best saved 🏆');
+        return null;
+      },
+    },
+  );
 }
 
 function openGoalDialog(id) {
@@ -1662,7 +1724,6 @@ function openAttemptDialog(activityId, attemptId = null) {
   openDialog(
     t ? 'Edit Attempt' : `Log Attempt · ${a.name}`,
     [
-      { name: 'date', type: 'date', label: 'Date', required: true, value: t?.date ?? core.todayISO() },
       {
         name: 'result',
         type: 'value',
@@ -1671,6 +1732,7 @@ function openAttemptDialog(activityId, attemptId = null) {
         required: true,
         value: core.inputText(t?.result, a.unit),
       },
+      { name: 'date', type: 'date', label: 'Date', required: true, value: t?.date ?? core.todayISO() },
       { name: 'notes', type: 'textarea', label: 'Notes', value: t?.notes ?? '' },
       { type: 'tags', value: t?.tags ?? [] },
     ],
@@ -2187,6 +2249,9 @@ function onViewClick(e) {
       break;
     case 'set-goal':
       openGoalDialog(id);
+      break;
+    case 'edit-oldbest':
+      openOldBestDialog(id);
       break;
     case 'settings':
       openSettings();
