@@ -4,7 +4,7 @@ A personal progress web app for tracking personal-best goals. It is a static sit
 
 ## Files
 - `index.html`, `styles.css`: the page and styling (dark mode)
-- `core.js`: the logic for bests, exercises and sessions, trends, the heat map, flags, and ideas (no DOM)
+- `core.js`: the logic for bests (Personal Best, Year Best, Old Best), year goals, exercises and sessions, trends, the heat map, flags, and ideas (no DOM)
 - `github.js`: reads and writes the data file through the GitHub Contents API
 - `app.js`: the screens, menu, sync, and offline handling
 - `versions.js`: the Version History content (the newest entry also powers the “app updated” pop-up). Add a new entry at the top for each change.

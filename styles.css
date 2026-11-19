@@ -193,7 +193,7 @@ main { max-width: 760px; margin: 0 auto; padding: 16px 16px 40px; animation: ris
 .panel h2 { margin-bottom: 10px; }
 .start-line { margin-top: 10px; }
 
-.attempt-form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.attempt-form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
 .attempt-form label { display: grid; gap: 4px; font-size: 0.85rem; color: var(--muted); }
 .attempt-form .wide { grid-column: 1 / -1; }
 
@@ -614,3 +614,31 @@ button.heat-cell.future { cursor: default; }
 #add-btn { font-size: 1.3rem; line-height: 1; padding: 6px 14px; }
 .day-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; text-align: left; }
 .day-list a { color: var(--text); text-decoration: none; }
+.panel-head .chips { flex: 0 1 auto; }
+.year-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.year-list li { display: grid; grid-template-columns: 52px auto 1fr; gap: 10px; align-items: baseline; }
+
+/* form dialogs as a full page: starts at the top, no sideways scrolling */
+#dlg {
+  position: fixed; inset: 0; margin: 0; padding: 0;
+  width: 100%; max-width: none; height: 100dvh; max-height: none;
+  border: 0; border-radius: 0; box-shadow: none; background: var(--bg);
+  overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y;
+}
+#dlg::backdrop { background: var(--bg); }
+#dlg .dlg-form { width: 100%; max-width: 560px; margin: 0 auto; padding: 0 16px calc(28px + env(safe-area-inset-bottom)); box-sizing: border-box; overflow-x: clip; }
+#dlg .dlg-form > * { min-width: 0; }
+#dlg .dlg-form input, #dlg .dlg-form select, #dlg .dlg-form textarea { max-width: 100%; min-width: 0; box-sizing: border-box; }
+#dlg .dlg-top { position: sticky; top: 0; z-index: 5; align-items: center; background: var(--bg); margin: 0 -16px 4px; padding: calc(10px + env(safe-area-inset-top)) 16px 10px; border-bottom: 1px solid var(--line); }
+#dlg .dlg-x { width: 44px; height: 44px; margin: 0 -10px 0 0; font-size: 1.2rem; }
+#dlg .dlg-form.confirming { min-height: 0; }
+#dlg .discard { position: fixed; inset: 0; border-radius: 0; background: var(--bg); }
+#dlg .dlg-top + .dlg-section, #dlg .dlg-top + p + .dlg-section { border-top: 0; padding-top: 8px; margin-top: 0; }
+#dlg .dlg-x { width: 48px; height: 48px; font-size: 1.6rem; margin-right: -12px; }
+.attempt-form input, .attempt-form textarea, .attempt-form select { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; }
+.attempt-form small { color: var(--muted); }
+.since.tap { cursor: pointer; }
+.since.tap .link { margin-left: 4px; }
+.mini-stats .label { white-space: nowrap; letter-spacing: 0; font-size: 0.6rem; overflow: hidden; text-overflow: ellipsis; }
+#dlg .dlg-form { padding-bottom: 0; }
+#dlg .dlg-form > .dlg-actions { position: sticky; bottom: 0; z-index: 4; background: var(--bg); margin: 0 -16px; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); }

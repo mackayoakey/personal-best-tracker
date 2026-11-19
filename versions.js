@@ -1,6 +1,34 @@
 // Newest first. Add a new entry at the top each time the app changes.
 export const VERSIONS = [
   {
+    number: 'V14',
+    date: '2026-11-19',
+    title: 'Full-page forms',
+    changes: [
+      'New Activity and the other forms now open as a full page that starts at the top of the screen, instead of a small window.',
+      'The ✕ and Cancel buttons respond on the first tap, even with the keyboard open.',
+      'The forms no longer scroll sideways, and their Save and Cancel buttons stay at the bottom of the screen.',
+      'The ✕ is larger.',
+      'New Activity is shorter: the Old Best is no longer asked for there. Tap “Add your Old Best” on a Best’s card or page any time, and tap the Old Best line to change it.',
+      'The Log an Attempt form is a single clean column, with the result first.',
+      'The pace message now says when you would reach your goal if that is after the end of the year.',
+    ],
+  },
+  {
+    number: 'V13',
+    date: '2026-11-19',
+    title: 'Personal Best, Year Best, and yearly goals',
+    changes: [
+      'Every Best now shows two records: your Personal Best (all time) and your Year Best, labeled with the year, like “2026 Best”. On January 1 it becomes “2027 Best” and starts fresh.',
+      'Your target is now a goal for the year. Only attempts in that year count toward it, and the card shows “2026 Goal”.',
+      'Beating your Old Best is its own goal and is tracked automatically.',
+      'When a new year starts, last year’s goal is saved with whether you reached it. Set a new goal any time, or reuse last year’s target with one tap.',
+      'Best pages have a Past Years list with each year’s best and goal result.',
+      'The trend chart has a This Year / All Time switch.',
+      'The Records page and celebrations now call out new Personal Bests and new Year Bests.',
+    ],
+  },
+  {
     number: 'V12',
     date: '2026-11-16',
     title: 'Simpler header, heat map with day details',
