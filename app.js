@@ -1427,6 +1427,11 @@ function openDialog(title, fields, { submitLabel = 'Save', onSubmit, secondary, 
   dlg._attempt = attemptClose;
   form.querySelector('[data-cancel]').addEventListener('click', attemptClose);
   form.querySelector('[data-x]').addEventListener('click', attemptClose);
+  // Pressing these buttons must not pull focus out of the field being typed in. Otherwise the phone keyboard
+  // closes, the page shifts, and the first tap is lost (it used to take several taps to cancel).
+  for (const btn of form.querySelectorAll('[data-x], [data-cancel], [data-keep], [data-discard]')) {
+    btn.addEventListener('pointerdown', (e) => e.preventDefault());
+  }
   form.querySelector('[data-keep]').addEventListener('click', () => {
     discard.hidden = true;
     form.classList.remove('confirming');
@@ -1490,7 +1495,7 @@ function activityFields(a) {
         ['lower', 'A lower number (time, like a sprint)'],
       ],
     },
-    { type: 'section', title: '2 · Your Old Best', note: 'Optional. Your best before 11/15/2026, the record you are trying to beat. Attempts you log from 11/15/2026 on count as New Bests.' },
+    { type: 'section', title: '2 · Your Old Best', note: 'Optional. Your best before 11/15/2026, the record you are trying to beat. Attempts you log from 11/15/2026 on count toward beating it.' },
     { name: 'startValue', type: 'value', unit: a?.unit ?? '', label: 'Old Best', value: core.inputText(a?.startBest?.value, a?.unit) },
     { name: 'startDate', type: 'date', label: 'When You Set It', value: a?.startBest?.date ?? core.todayISO() },
     { type: 'section', title: '3 · Goal', note: `Your goal for ${core.currentYear()}. Choose now, or switch later with the Set a Goal button.` },

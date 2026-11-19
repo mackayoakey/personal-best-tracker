@@ -1,6 +1,16 @@
 // Newest first. Add a new entry at the top each time the app changes.
 export const VERSIONS = [
   {
+    number: 'V14',
+    date: '2026-11-19',
+    title: 'Full-page forms',
+    changes: [
+      'New Activity and the other forms now open as a full page that starts at the top of the screen, instead of a small window.',
+      'The ✕ and Cancel buttons respond on the first tap, even with the keyboard open.',
+      'The forms no longer scroll sideways.',
+    ],
+  },
+  {
     number: 'V13',
     date: '2026-11-19',
     title: 'Personal Best, Year Best, and yearly goals',
