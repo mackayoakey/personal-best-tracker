@@ -2424,13 +2424,28 @@ function onDragStart(e) {
   card.classList.add('dragging');
   handle.setPointerCapture(e.pointerId);
 
+  // A single line shows where the card will land.
+  const line = document.createElement('div');
+  line.className = 'drop-line';
+  document.body.append(line);
+  const placeLine = () => {
+    if (!others.length) return;
+    const before = to < others.length;
+    const r = others[before ? to : others.length - 1].getBoundingClientRect();
+    line.style.left = `${r.left}px`;
+    line.style.width = `${r.width}px`;
+    line.style.top = `${(before ? r.top : r.bottom) + (before ? -7 : 7)}px`;
+  };
+
   const onMove = (ev) => {
     card.style.transform = `translateY(${ev.clientY - startY}px)`;
     to = others.filter((c) => {
       const r = c.getBoundingClientRect();
       return ev.clientY > r.top + r.height / 2;
     }).length;
+    placeLine();
   };
+  placeLine();
 
   const onUp = () => {
     handle.removeEventListener('pointermove', onMove);
@@ -2438,6 +2453,7 @@ function onDragStart(e) {
     handle.removeEventListener('pointercancel', onUp);
     card.classList.remove('dragging');
     card.style.transform = '';
+    line.remove();
     state.suppressClick = true;
     setTimeout(() => {
       state.suppressClick = false;

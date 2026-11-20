@@ -1,6 +1,15 @@
 // Newest first. Add a new entry at the top each time the app changes.
 export const VERSIONS = [
   {
+    number: 'V16',
+    date: '2026-11-20',
+    title: 'Clearer reordering, tabs at the bottom',
+    changes: [
+      'When you drag a Best to reorder, a bright line shows exactly where it will land.',
+      'The Bests / Exercises switch now stays at the bottom of the screen, within thumb reach.',
+    ],
+  },
+  {
     number: 'V15',
     date: '2026-11-20',
     title: 'Assisted exercises, simpler sets, date fix',
