@@ -303,6 +303,22 @@ export function rolloverGoal(activity, today = todayISO()) {
   return activity;
 }
 
+// An activity marked "no Personal Best for now" gets one when a year ends: the best result from the years before
+// the current one becomes its Personal Best to beat. With no earlier attempts it keeps waiting.
+export function rolloverOldBest(activity, today = todayISO()) {
+  if (!activity.noOldBest || activity.startBest) return activity;
+  const year = currentYear(today);
+  let best = null;
+  for (const t of sortAttempts(activity.attempts)) {
+    if (yearOf(t.date) < year && (!best || isBetter(t.result, best.result, activity.direction))) best = t;
+  }
+  if (best) {
+    activity.startBest = { value: best.result, date: best.date };
+    activity.noOldBest = false;
+  }
+  return activity;
+}
+
 // How far your Year Best has moved toward the year goal, starting from your first attempt of the year (0 to 1).
 // The goal only counts as reached when an attempt in that year reaches it.
 export function progress(activity) {
@@ -448,10 +464,10 @@ export function parseActivityInput(raw) {
   if (!trackOnly && goalDate && yearOf(goalDate) !== year) return { error: `The goal date must be in ${year}, because this is your ${year} goal.` };
 
   const startP = parseValue(raw.startValue, unit);
-  if (startP.error) return { error: `Old Best: ${startP.error}` };
+  if (startP.error) return { error: `Personal Best: ${startP.error}` };
   const startValue = startP.value;
   const startDate = blank(raw.startDate) ? todayISO() : raw.startDate;
-  if (startValue !== null && !isISODate(startDate)) return { error: 'Old Best date is not valid.' };
+  if (startValue !== null && !isISODate(startDate)) return { error: 'Personal Best date is not valid.' };
 
   return {
     value: {
@@ -827,7 +843,7 @@ export function recordsLog(data) {
       if (beatsOld) beaten = true;
       if (hit) hit.reached = true;
       const badges = [];
-      if (beatsOld) badges.push('Beat Old Best');
+      if (beatsOld) badges.push('Beat Personal Best');
       if (hit) badges.push(`${year} Goal Reached`);
       if (!badges.length && pbPrev !== null && isBetter(t.result, pbPrev, a.direction)) badges.push('New Personal Best');
       else if (!badges.length && yearPrev !== null && isBetter(t.result, yearPrev, a.direction)) badges.push(`New ${year} Best`);
@@ -928,6 +944,7 @@ export function normalizeData(raw, today = todayISO()) {
     direction: a.direction === 'lower' ? 'lower' : 'higher',
     attempts: Array.isArray(a.attempts) ? a.attempts : [],
     startBest: a.startBest ?? null,
+    noOldBest: Boolean(a.noOldBest) && !a.startBest,
     target: a.target ?? null,
     goalDate: a.goalDate ?? null,
     trackOnly: Boolean(a.trackOnly),
@@ -940,7 +957,10 @@ export function normalizeData(raw, today = todayISO()) {
     archived: Boolean(a.archived),
     milestones: (Array.isArray(a.milestones) ? a.milestones : []).map(Number).filter(Number.isFinite),
   }));
-  for (const a of activities) rolloverGoal(a, today);
+  for (const a of activities) {
+    rolloverGoal(a, today);
+    rolloverOldBest(a, today);
+  }
 
   const ideas = Array.isArray(raw.ideas)
     ? raw.ideas

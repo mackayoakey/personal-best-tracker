@@ -243,7 +243,7 @@ function targetText(a) {
 function badges(a) {
   const items = [];
   if (a.trackOnly) items.push('📈 Track Only');
-  if (a.beaten) items.push('🏆 Old Best Beaten');
+  if (a.beaten) items.push('🏆 Personal Best Beaten');
   if (a.reachedGoal) items.push(`🎯 ${core.goalYear(a)} Goal Reached`);
   return items.map((t) => `<span class="badge">${t}</span>`).join('');
 }
@@ -259,7 +259,7 @@ function progressView(prog, a) {
 function directionNotice(a) {
   if (!core.targetBehindRecord(a)) return '';
   const other = a.direction === 'lower' ? 'Higher' : 'Lower';
-  return `<p class="warn-note">Your target is already behind your Old Best, so it isn’t a goal yet. Is ${a.direction === 'lower' ? 'lower' : 'higher'} really better? <button class="link" type="button" data-action="flip-direction" data-id="${a.id}">Switch to ${other} Is Better</button></p>`;
+  return `<p class="warn-note">Your target is already behind your Personal Best, so it isn’t a goal yet. Is ${a.direction === 'lower' ? 'lower' : 'higher'} really better? <button class="link" type="button" data-action="flip-direction" data-id="${a.id}">Switch to ${other} Is Better</button></p>`;
 }
 
 function paceView(a) {
@@ -491,18 +491,22 @@ function recordStats(a, left, withDates = true) {
   return { html: cols.join(''), three: true };
 }
 
-// One line on how you are doing against the Old Best. Tap it to add or change the Old Best.
+// One line on how you are doing against the Personal Best. Tap it to add or change the Personal Best.
 function oldBestLine(a) {
   const tap = `data-action="edit-oldbest" data-id="${a.id}" role="button" tabindex="0"`;
   const ob = core.oldBest(a);
-  if (!ob) return `<p class="since tap" ${tap}>No Old Best yet. <span class="link">Add your Old Best</span></p>`;
+  if (!ob) {
+    return a.noOldBest
+      ? `<p class="since tap" ${tap}>No Personal Best to beat for now. It is set from your best when ${core.currentYear()} ends. <span class="link">Add one now</span></p>`
+      : `<p class="since tap" ${tap}>No Personal Best to beat yet. <span class="link">Add your Personal Best</span></p>`;
+  }
   const st = core.oldBestStatus(a);
   const old = fmtValue(ob.value, a.unit);
   const text = st.beaten
-    ? `🏆 You beat your Old Best of ${old}.`
+    ? `🏆 You beat your Personal Best of ${old}.`
     : st.gap !== null
-      ? `${fmtValue(Number(st.gap.toFixed(4)), a.unit)} to beat your Old Best of ${old}.`
-      : `Beat your Old Best of ${old} with a new attempt.`;
+      ? `${fmtValue(Number(st.gap.toFixed(4)), a.unit)} to beat your Personal Best of ${old}.`
+      : `Beat your Personal Best of ${old} with a new attempt.`;
   return `<p class="since tap" ${tap}>${text} <span class="link">Edit</span></p>`;
 }
 
@@ -512,13 +516,13 @@ function bestPill(tr) {
   return m ? `<span class="pill ${m[0]}">${m[1]}</span>` : '<span class="pill muted">No Trend Yet</span>';
 }
 
-// One short line: how far to the year goal and to the Old Best, and days left.
+// One short line: how far to the year goal and to the Personal Best, and days left.
 function statusLine(a, prog, left) {
   const parts = [];
   if (prog) parts.push(prog.met ? `${core.goalYear(a)} goal reached 🎉` : `${fmtValue(Number(prog.gap.toFixed(4)), a.unit)} to ${core.goalYear(a)} goal`);
   const st = core.oldBestStatus(a);
   if (st.hasOld) {
-    parts.push(st.beaten ? '🏆 Old Best beaten' : st.gap !== null ? `${fmtValue(Number(st.gap.toFixed(4)), a.unit)} to beat Old Best` : 'Beat your Old Best');
+    parts.push(st.beaten ? '🏆 Personal Best beaten' : st.gap !== null ? `${fmtValue(Number(st.gap.toFixed(4)), a.unit)} to beat Personal Best` : 'Beat your Personal Best');
   }
   const next = core.milestoneStatus(a).next;
   if (next && !a.trackOnly) parts.push(`Next: ${fmtValue(next.value, a.unit)}`);
@@ -564,7 +568,7 @@ function cardView(a, today) {
         ${prog ? `<div class="progress thin" role="img" aria-label="${pct} percent of the way to target"><span style="width:${pct}%"></span></div>` : ''}
         ${line ? `<p class="sub tight">${line}</p>` : ''}
         ${needsGoal ? '<p class="sub tight">No goal yet. <button class="link" type="button" data-action="set-goal" data-id="' + a.id + '">Set a Goal</button></p>' : ''}
-        ${!core.oldBest(a) && !a.trackOnly ? '<p class="sub tight">No Old Best yet. <button class="link" type="button" data-action="edit-oldbest" data-id="' + a.id + '">Add Old Best</button></p>' : ''}
+        ${!core.oldBest(a) && !a.trackOnly ? '<p class="sub tight">' + (a.noOldBest ? 'No Personal Best to beat for now.' : 'No Personal Best to beat yet.') + ' <button class="link" type="button" data-action="edit-oldbest" data-id="' + a.id + '">Add Personal Best</button></p>' : ''}
         ${directionNotice(a)}
         <div class="card-trend">${spark}${bestPill(tr)}</div>
       </div>
@@ -620,7 +624,7 @@ function detailView(a) {
         <div class="attempt-main">
           <strong>${fmtValue(t.result, a.unit)}</strong>
           <span class="sub">${fmtDate(t.date)}</span>
-          ${t.id === pbId ? '<span class="badge">Personal Best</span>' : ''}${t.id === ybId ? `<span class="badge">${year} Best</span>` : ''}${t.id === oldId ? '<span class="badge">Old Best</span>' : ''}${core.isNewAttempt(t) ? '' : '<span class="sub">(before 11/15/2026)</span>'}
+          ${t.id === pbId ? '<span class="badge">Personal Best</span>' : ''}${t.id === ybId ? `<span class="badge">${year} Best</span>` : ''}${t.id === oldId && t.id !== pbId ? '<span class="badge">Starting Personal Best</span>' : ''}${core.isNewAttempt(t) ? '' : '<span class="sub">(before 11/15/2026)</span>'}
         </div>
         ${t.notes ? `<p class="notes">${esc(t.notes)}</p>` : ''}
         ${tagChipsHTML(t.tags)}
@@ -719,7 +723,7 @@ function detailView(a) {
           : ''
       }
       ${history.length ? `<ul class="attempts">${rows}</ul>` : allHistory.length ? '<p class="sub">No attempts with that tag.</p>' : '<p class="sub">No attempts yet. Log your first one above.</p>'}
-      ${a.startBest ? `<p class="sub start-line">Old Best entered: ${fmtValue(a.startBest.value, a.unit)} on ${fmtDate(a.startBest.date)}</p>` : ''}
+      ${a.startBest ? `<p class="sub start-line">Personal Best entered: ${fmtValue(a.startBest.value, a.unit)} on ${fmtDate(a.startBest.date)}</p>` : ''}
     </section>`;
 }
 
@@ -973,7 +977,7 @@ function chartView(a, tr, range = 'all') {
     `<line class="${cls}" x1="${L}" x2="${W - R}" y1="${sy(value)}" y2="${sy(value)}"/>` +
     `<text class="ref" x="${L + 6}" y="${sy(value) - 8}" text-anchor="start">${label} ${core.formatValue(value, a.unit)}</text>`;
   if (showGoal) out.push(refLine(a.target, 'target', `${core.goalYear(a)} Goal`));
-  if (oldRef) out.push(refLine(oldRef.value, 'start', 'Old Best'));
+  if (oldRef) out.push(refLine(oldRef.value, 'start', 'Personal Best'));
 
   if (goalX !== null) {
     out.push(`<line class="goalline" x1="${sx(goalX)}" x2="${sx(goalX)}" y1="${T - 6}" y2="${H - B}"/>`);
@@ -1071,7 +1075,7 @@ function recordsView() {
     .join('');
   return `<nav class="crumbs"><a href="#/">← All Activities</a></nav>
     <h1>Records</h1>
-    <p class="sub">Every Old Best beaten, year goal reached, and new Personal or Year Best, newest first.</p>
+    <p class="sub">Every Personal Best beaten, year goal reached, and new bests, newest first.</p>
     ${log.length ? `<ul class="records">${items}</ul>` : '<p class="sub">No records yet. Your first new best will show up here.</p>'}`;
 }
 
@@ -1323,7 +1327,7 @@ function openDialog(title, fields, { submitLabel = 'Save', onSubmit, secondary, 
     ${fields.map(fieldHTML).join('')}
     <p class="form-error" role="alert"></p>
     <div class="dlg-actions">
-      ${secondary ? '<button type="button" class="btn danger" data-secondary></button>' : ''}
+      ${secondary ? `<button type="button" class="btn${secondary.danger === false ? '' : ' danger'}" data-secondary></button>` : ''}
       <span class="grow"></span>
       <button type="button" class="btn ghost" data-cancel>Cancel</button>
       <button type="submit" class="btn primary">${esc(submitLabel)}</button>
@@ -1529,14 +1533,14 @@ function activityFields(a) {
       unit: a?.unit ?? '',
       label: `${core.currentYear()} Goal`,
       value: core.inputText(a?.target, a?.unit),
-      hint: `Optional. A target to beat this year, for example 185 when your best is 170. Beating your Old Best is its own goal.`,
+      hint: `Optional. A target to beat this year, for example 185 when your best is 170. Beating your Personal Best is its own goal.`,
       when: 'goal',
     },
     { name: 'goalDate', type: 'date', label: 'Goal Date', value: a?.goalDate ?? '', hint: `Optional deadline, in ${core.currentYear()}.`, when: 'goal' },
   ];
 }
 
-const BEHIND_RECORD_MSG = 'Your target is already beaten by your Old Best. Check the target, or whether a lower or higher number is better.';
+const BEHIND_RECORD_MSG = 'Your target is already beaten by your Personal Best. Check the target, or whether a lower or higher number is better.';
 
 function openActivityDialog(id = null) {
   const existing = id ? core.findActivity(state.data, id) : null;
@@ -1546,7 +1550,7 @@ function openActivityDialog(id = null) {
       const unit = comboValue(raw, 'unit');
       const { error, value } = core.parseActivityInput({ ...raw, unit, trackOnly: raw.mode === 'track' });
       if (error) return error;
-      value.startBest = existing?.startBest ?? null; // the Old Best is edited by tapping it on the Best's page
+      value.startBest = existing?.startBest ?? null; // the Personal Best is edited by tapping it on the Best's page
       if (!value.trackOnly && value.target !== null && value.startBest && core.meetsTarget(value.startBest.value, value.target, value.direction)) {
         return BEHIND_RECORD_MSG;
       }
@@ -1590,14 +1594,15 @@ function openOldBestDialog(id) {
   const a = core.findActivity(state.data, id);
   if (!a) return;
   const has = Boolean(a.startBest);
+  const year = core.currentYear();
   openDialog(
-    has ? `Edit Old Best · ${a.name}` : `Add Old Best · ${a.name}`,
+    has ? `Edit Personal Best · ${a.name}` : `Add Personal Best · ${a.name}`,
     [
       {
         name: 'value',
         type: 'value',
         unit: a.unit,
-        label: `Old Best${a.unit ? ` (${a.unit})` : ''}`,
+        label: `Personal Best${a.unit ? ` (${a.unit})` : ''}`,
         required: true,
         value: core.inputText(a.startBest?.value, a.unit),
         hint: 'The record you are trying to beat.',
@@ -1605,8 +1610,10 @@ function openOldBestDialog(id) {
       { name: 'date', type: 'date', label: 'When You Set It', value: a.startBest?.date ?? core.todayISO() },
     ],
     {
-      message: 'Attempts you log from 11/15/2026 on count toward beating it.',
-      submitLabel: 'Save Old Best',
+      message: a.noOldBest
+        ? `You chose no Personal Best for now. It will be set from your best when ${year} ends. You can add one here any time.`
+        : `Attempts you log from 11/15/2026 on count toward beating it. No Personal Best yet? Choose “No Personal Best” and it will be set from your best when ${year} ends.`,
+      submitLabel: 'Save Personal Best',
       secondary: has
         ? {
             label: 'Remove',
@@ -1614,24 +1621,31 @@ function openOldBestDialog(id) {
               commit((d) => {
                 const act = core.findActivity(d, id);
                 act.beaten = false;
-                core.updateActivity(act, { startBest: null });
+                core.updateActivity(act, { startBest: null, noOldBest: false });
               });
-              toast('Old Best removed.');
+              toast('Personal Best removed.');
             },
           }
-        : null,
+        : {
+            label: a.noOldBest ? 'Keep No Personal Best' : 'No Personal Best',
+            danger: false,
+            onClick: () => {
+              commit((d) => core.updateActivity(core.findActivity(d, id), { noOldBest: true }));
+              toast(`No Personal Best for now. It will be set from your best when ${year} ends.`);
+            },
+          },
       onSubmit: (raw) => {
         const p = core.parseValue(raw.value, a.unit);
         if (p.error) return p.error;
-        if (p.value === null) return 'Enter your Old Best.';
+        if (p.value === null) return 'Enter your Personal Best.';
         if (!core.isISODate(raw.date)) return 'Pick a valid date.';
         if (!a.trackOnly && a.target != null && core.meetsTarget(p.value, a.target, a.direction)) return BEHIND_RECORD_MSG;
         commit((d) => {
           const act = core.findActivity(d, id);
           act.beaten = false;
-          core.updateActivity(act, { startBest: { value: p.value, date: raw.date } });
+          core.updateActivity(act, { startBest: { value: p.value, date: raw.date }, noOldBest: false });
         });
-        toast('Old Best saved 🏆');
+        toast('Personal Best saved 🏆');
         return null;
       },
     },
@@ -1669,7 +1683,7 @@ function openGoalDialog(id) {
       { type: 'action', id: 'suggest', label: '✨ Suggest Milestones' },
     ],
     {
-      message: `This is your goal for ${year}, measured against your ${year} Best. Beating your Old Best is a separate goal that is tracked automatically. Goals do not change your attempts or records.`,
+      message: `This is your goal for ${year}, measured against your ${year} Best. Beating your Personal Best is a separate goal that is tracked automatically. Goals do not change your attempts or records.`,
       submitLabel: 'Save Goal',
       secondary: hasGoal
         ? {
@@ -1677,7 +1691,7 @@ function openGoalDialog(id) {
             onClick: () => {
               const keepsOldBest = Boolean(core.oldBest(a));
               commit((d) => core.updateActivity(core.findActivity(d, id), { trackOnly: !keepsOldBest, target: null, goalYear: null, goalDate: null, milestones: [] }));
-              toast(keepsOldBest ? `${year} goal removed. Your Old Best goal is still tracked.` : 'Goal removed. This activity is now track only.');
+              toast(keepsOldBest ? `${year} goal removed. Your Personal Best goal is still tracked.` : 'Goal removed. This activity is now track only.');
             },
           }
         : null,
@@ -2187,7 +2201,7 @@ function celebrate(message) {
 function afterAttempt(activity, result) {
   const ev = result.events;
   if (ev.target) celebrate(`🎯 ${core.goalYear(activity)} goal reached on ${activity.name}!`);
-  else if (ev.beatOld) celebrate(`🏆 You beat your Old Best on ${activity.name}!`);
+  else if (ev.beatOld) celebrate(`🏆 You beat your Personal Best on ${activity.name}!`);
   else if (ev.milestone !== null) celebrate(`⭐ Milestone reached: ${fmtValue(ev.milestone, activity.unit)}`);
   else if (ev.personalBest) celebrate(`🔥 New Personal Best on ${activity.name}!`);
   else if (ev.yearBest) celebrate(`🔥 New ${core.yearOf(result.attempt.date)} Best on ${activity.name}!`);

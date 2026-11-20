@@ -1,6 +1,16 @@
 // Newest first. Add a new entry at the top each time the app changes.
 export const VERSIONS = [
   {
+    number: 'V17',
+    date: '2026-11-20',
+    title: 'Old Best is now Personal Best',
+    changes: [
+      '“Old Best” is now called “Personal Best” everywhere: the record you are trying to beat.',
+      'When adding a Personal Best you can choose “No Personal Best”. When the year ends, the best result you logged becomes your Personal Best to beat.',
+      'You can still add or change a Personal Best at any time, before or after the year ends.',
+    ],
+  },
+  {
     number: 'V16',
     date: '2026-11-20',
     title: 'Clearer reordering, tabs at the bottom',
