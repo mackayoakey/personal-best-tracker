@@ -1,6 +1,17 @@
 // Newest first. Add a new entry at the top each time the app changes.
 export const VERSIONS = [
   {
+    number: 'V18',
+    date: '2026-11-20',
+    title: 'Drag to reorder everywhere',
+    changes: [
+      'Exercises can now be reordered by dragging ⋮⋮, in both tile and list view.',
+      'Bests in list view can be dragged too, not just tiles.',
+      'On wide screens the drop line is vertical between side-by-side tiles.',
+      'The page scrolls on its own when you drag near the top or bottom edge.',
+    ],
+  },
+  {
     number: 'V17',
     date: '2026-11-20',
     title: 'Old Best is now Personal Best',

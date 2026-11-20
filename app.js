@@ -407,6 +407,9 @@ function finderHTML(scope, total) {
 
 const canReorder = (scope) => (scope === 'b' ? state.bSort === 'manual' && !state.bQ.trim() : state.eSort === 'manual' && !state.eQ.trim());
 
+const dragHandle = (scope, name) =>
+  canReorder(scope) ? `<button class="drag-handle" type="button" data-reorder="${scope}" aria-label="Drag to reorder ${esc(name)}">⋮⋮</button>` : '';
+
 function archivedHTML(scope, archived) {
   if (!archived.length) return '';
   const rows = archived
@@ -446,7 +449,7 @@ function dashboardView() {
   const goals = list.filter((a) => !a.trackOnly && a.target != null).length;
   const summary = `${list.length} activit${list.length === 1 ? 'y' : 'ies'}` + (goals ? ` · ${reached} of ${goals} goal${goals === 1 ? '' : 's'} reached` : '');
   const shown = finderList('b', list);
-  const hint = list.length > 1 && state.bView === 'tile' && canReorder('b') ? '<p class="hint">Tip: drag ⋮⋮ to reorder your activities.</p>' : '';
+  const hint = list.length > 1 && canReorder('b') ? '<p class="hint">Tip: drag ⋮⋮ to reorder your activities.</p>' : '';
   return `${notice}
     ${tabsView('bests')}
     <section class="hero">
@@ -557,7 +560,7 @@ function cardView(a, today) {
   const line = needsGoal ? '' : statusLine(a, prog, left);
   return `
     <article class="card compact${a.reachedGoal ? ' reached' : ''}" data-action="open" data-id="${a.id}">
-      ${canReorder('b') ? `<button class="drag-handle" type="button" aria-label="Drag to reorder ${esc(a.name)}">⋮⋮</button>` : ''}
+      ${dragHandle('b', a.name)}
       <div class="card-body">
         <div class="card-head">
           <h2>${esc(a.name)}</h2>
@@ -583,7 +586,8 @@ function bestRow(a, today) {
   const pct = prog ? Math.round(prog.fraction * 100) : 0;
   const sub = [pb ? `Personal ${fmtValue(pb.value, a.unit)}` : '', yb ? `${core.currentYear()} ${fmtValue(yb.value, a.unit)}` : `No ${core.currentYear()} attempts`].filter(Boolean).join(' · ');
   return `
-    <article class="row-card" data-action="open" data-id="${a.id}">
+    <article class="row-card${canReorder('b') ? ' has-handle' : ''}" data-action="open" data-id="${a.id}">
+      ${dragHandle('b', a.name)}
       <div class="row-main">
         <strong>${esc(a.name)}</strong>
         <span class="sub">${sub}</span>
@@ -773,7 +777,8 @@ function exerciseTile(e) {
   const last = core.lastSession(e);
   const tr = core.exerciseTrend(e);
   return `
-    <article class="card plain" data-action="open-exercise" data-id="${e.id}">
+    <article class="card${canReorder('e') ? '' : ' plain'}" data-action="open-exercise" data-id="${e.id}">
+      ${dragHandle('e', e.name)}
       <div class="card-body">
         <div class="card-head">
           <h2>${esc(e.name)}</h2>
@@ -797,7 +802,8 @@ function exerciseRow(e) {
   const last = core.lastSession(e);
   const tr = core.exerciseTrend(e);
   return `
-    <article class="row-card" data-action="open-exercise" data-id="${e.id}">
+    <article class="row-card${canReorder('e') ? ' has-handle' : ''}" data-action="open-exercise" data-id="${e.id}">
+      ${dragHandle('e', e.name)}
       <div class="row-main">
         <strong>${esc(e.name)}</strong>
         <span class="sub">${[e.category, last ? fmtDateShort(last.date) : 'No sessions'].filter(Boolean).map(esc).join(' · ')}</span>
@@ -2422,18 +2428,25 @@ function onViewKeydown(e) {
   }
 }
 
-// Drag a card by its handle to reorder the dashboard.
+// Drag a tile or row by its ⋮⋮ handle to reorder Bests or Exercises.
 function onDragStart(e) {
   const handle = e.target.closest('.drag-handle');
   if (!handle || e.button > 0) return;
   e.preventDefault();
 
-  const cards = [...view.querySelectorAll('.card')];
-  const card = handle.closest('.card');
+  const card = handle.closest('.card, .row-card');
+  const cards = [...card.parentElement.children].filter((c) => c.matches('.card[data-id], .row-card[data-id]'));
   const from = cards.indexOf(card);
   const others = cards.filter((c) => c !== card);
+  const startX = e.clientX;
   const startY = e.clientY;
+  const startScroll = window.scrollY;
   let to = from;
+  let lastEvent = e;
+
+  // Two columns on wide screens: tiles then sit side by side, so the line is vertical there.
+  const tops = cards.map((c) => c.getBoundingClientRect().top);
+  const sideBySide = tops.some((t, i) => i > 0 && Math.abs(t - tops[0]) < 4);
 
   card.classList.add('dragging');
   handle.setPointerCapture(e.pointerId);
@@ -2446,22 +2459,52 @@ function onDragStart(e) {
     if (!others.length) return;
     const before = to < others.length;
     const r = others[before ? to : others.length - 1].getBoundingClientRect();
-    line.style.left = `${r.left}px`;
-    line.style.width = `${r.width}px`;
-    line.style.top = `${(before ? r.top : r.bottom) + (before ? -7 : 7)}px`;
+    if (sideBySide) {
+      line.style.width = '4px';
+      line.style.height = `${r.height}px`;
+      line.style.marginTop = '0';
+      line.style.left = `${(before ? r.left - 8 : r.right + 6)}px`;
+      line.style.top = `${r.top}px`;
+    } else {
+      line.style.width = `${r.width}px`;
+      line.style.height = '4px';
+      line.style.marginTop = '-2px';
+      line.style.left = `${r.left}px`;
+      line.style.top = `${(before ? r.top - 7 : r.bottom + 7)}px`;
+    }
   };
 
-  const onMove = (ev) => {
-    card.style.transform = `translateY(${ev.clientY - startY}px)`;
+  const update = () => {
+    const ev = lastEvent;
+    card.style.transform = `translate(${ev.clientX - startX}px, ${ev.clientY - startY + (window.scrollY - startScroll)}px)`;
     to = others.filter((c) => {
       const r = c.getBoundingClientRect();
-      return ev.clientY > r.top + r.height / 2;
+      if (!sideBySide) return ev.clientY > r.top + r.height / 2;
+      return ev.clientY > r.bottom || (ev.clientY >= r.top && ev.clientX > r.left + r.width / 2);
     }).length;
     placeLine();
   };
-  placeLine();
+
+  // Near the top or bottom edge the page scrolls, so a long list can be reordered in one drag.
+  let scrollTimer = null;
+  const autoScroll = () => {
+    const y = lastEvent.clientY;
+    const dy = y < 80 ? -14 : y > window.innerHeight - 120 ? 14 : 0;
+    if (dy) {
+      window.scrollBy(0, dy);
+      update();
+    }
+  };
+  scrollTimer = setInterval(autoScroll, 16);
+
+  const onMove = (ev) => {
+    lastEvent = ev;
+    update();
+  };
+  update();
 
   const onUp = () => {
+    clearInterval(scrollTimer);
     handle.removeEventListener('pointermove', onMove);
     handle.removeEventListener('pointerup', onUp);
     handle.removeEventListener('pointercancel', onUp);
@@ -2476,12 +2519,13 @@ function onDragStart(e) {
       const ids = cards.map((c) => c.dataset.id);
       const [movedId] = ids.splice(from, 1);
       ids.splice(to, 0, movedId);
+      const key = handle.dataset.reorder === 'e' ? 'exercises' : 'activities';
       commit((d) => {
-        // Visible cards take the slots the visible activities held, so archived ones stay put.
-        const slots = d.activities.map((a, i) => (ids.includes(a.id) ? i : -1)).filter((i) => i >= 0);
-        const byId = new Map(d.activities.map((a) => [a.id, a]));
+        // Visible cards take the slots the visible ones held, so archived ones stay put.
+        const slots = d[key].map((x, i) => (ids.includes(x.id) ? i : -1)).filter((i) => i >= 0);
+        const byId = new Map(d[key].map((x) => [x.id, x]));
         ids.forEach((id, k) => {
-          d.activities[slots[k]] = byId.get(id);
+          d[key][slots[k]] = byId.get(id);
         });
       });
     }
