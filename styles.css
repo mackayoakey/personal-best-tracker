@@ -642,3 +642,14 @@ button.heat-cell.future { cursor: default; }
 .mini-stats .label { white-space: nowrap; letter-spacing: 0; font-size: 0.6rem; overflow: hidden; text-overflow: ellipsis; }
 #dlg .dlg-form { padding-bottom: 0; }
 #dlg .dlg-form > .dlg-actions { position: sticky; bottom: 0; z-index: 4; background: var(--bg); margin: 0 -16px; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); }
+
+/* date fields: iOS Safari gives them a fixed intrinsic width, which pushed them off the right edge */
+label { min-width: 0; }
+input[type="date"] {
+  -webkit-appearance: none; appearance: none;
+  display: block; box-sizing: border-box;
+  width: 100%; min-width: 0; max-width: 100%;
+  min-height: 42px; text-align: left;
+}
+input[type="date"]::-webkit-date-and-time-value { text-align: left; min-width: 0; margin: 0; }
+input[type="date"]::-webkit-datetime-edit { padding: 0; }

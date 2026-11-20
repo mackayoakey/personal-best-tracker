@@ -1,6 +1,14 @@
 // Newest first. Add a new entry at the top each time the app changes.
 export const VERSIONS = [
   {
+    number: 'V15',
+    date: '2026-11-20',
+    title: 'Date field fix',
+    changes: [
+      'The Date field on Log an Attempt (and the other forms) no longer runs off the right side of the screen.',
+    ],
+  },
+  {
     number: 'V14',
     date: '2026-11-19',
     title: 'Full-page forms',
