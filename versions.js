@@ -3,9 +3,12 @@ export const VERSIONS = [
   {
     number: 'V15',
     date: '2026-11-20',
-    title: 'Date field fix',
+    title: 'Assisted exercises, simpler sets, date fix',
     changes: [
-      'The Date field on Log an Attempt (and the other forms) no longer runs off the right side of the screen.',
+      'Exercises can now be marked “Assisted”, for things like assisted pull-ups where less weight is better. Top set, best, trend, and records all treat a lighter weight as progress.',
+      'In Log Session, sets 2 and up show set 1’s weight in grey. Leave them empty to use it, or type a weight to override it.',
+      'The −5 / −2.5 / +2.5 / +5 / +10 buttons are gone from Log Session. Type the weight yourself.',
+      'The Date field on Log an Attempt and Log Session no longer runs off the right side of the screen.',
     ],
   },
   {

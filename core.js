@@ -550,6 +550,7 @@ export function parseExerciseInput(raw) {
       category: String(raw.category ?? '').trim(),
       notes: String(raw.notes ?? '').trim(),
       linkedActivityId: String(raw.linkedActivityId ?? '') || null,
+      assisted: Boolean(raw.assisted),
     },
   };
 }
@@ -601,25 +602,28 @@ export function sortSessions(sessions) {
 }
 
 // The top set is the heaviest set, and the most reps at that weight.
-export function sessionStats(session) {
-  let topWeight = 0;
+// assisted: for exercises where less weight is better (assisted pull-ups), the top set is the lightest one.
+export function sessionStats(session, assisted = false) {
+  let topWeight = assisted ? Infinity : 0;
   let topReps = 0;
   let volume = 0;
   let totalReps = 0;
   for (const s of session.sets) {
-    if (s.weight > topWeight || (s.weight === topWeight && s.reps > topReps)) {
+    const lighter = assisted ? s.weight < topWeight : s.weight > topWeight;
+    if (lighter || (s.weight === topWeight && s.reps > topReps)) {
       topWeight = s.weight;
       topReps = s.reps;
     }
-    volume += s.weight * s.reps;
+    if (!assisted) volume += s.weight * s.reps;
     totalReps += s.reps;
   }
+  if (!Number.isFinite(topWeight)) topWeight = 0;
   return { topWeight, topReps, volume, totalReps, setCount: session.sets.length };
 }
 
 // Positive when stats a is a better top set than stats b.
-function compareTopSets(a, b) {
-  if (a.topWeight !== b.topWeight) return a.topWeight - b.topWeight;
+function compareTopSets(a, b, assisted = false) {
+  if (a.topWeight !== b.topWeight) return assisted ? b.topWeight - a.topWeight : a.topWeight - b.topWeight;
   return a.topReps - b.topReps;
 }
 
@@ -637,8 +641,8 @@ export function bestSession(exercise) {
   let best = null;
   let bestStats = null;
   for (const s of sortSessions(exercise.sessions)) {
-    const st = sessionStats(s);
-    if (!best || compareTopSets(st, bestStats) > 0) {
+    const st = sessionStats(s, exercise.assisted);
+    if (!best || compareTopSets(st, bestStats, exercise.assisted) > 0) {
       best = s;
       bestStats = st;
     }
@@ -651,13 +655,15 @@ export function bestSession(exercise) {
 export function sessionChange(exercise) {
   const sorted = sortSessions(exercise.sessions);
   if (sorted.length < 2) return null;
-  const a = sessionStats(sorted[sorted.length - 1]);
-  const b = sessionStats(sorted[sorted.length - 2]);
+  const assisted = Boolean(exercise.assisted);
+  const a = sessionStats(sorted[sorted.length - 1], assisted);
+  const b = sessionStats(sorted[sorted.length - 2], assisted);
   const signed = (n) => `${n > 0 ? '+' : '−'}${Math.abs(Number(n.toFixed(2)))}`;
   const dirOf = (n) => (n > 0 ? 'up' : 'down');
   if (a.topWeight !== b.topWeight) {
     const d = a.topWeight - b.topWeight;
-    return { dir: dirOf(d), text: `${signed(d)} ${exercise.unit} on your top set` };
+    // Assisted: less weight is the improvement.
+    return { dir: dirOf(assisted ? -d : d), text: `${signed(d)} ${exercise.unit}${assisted ? ' assistance' : ''} on your top set` };
   }
   if (a.topReps !== b.topReps) {
     const d = a.topReps - b.topReps;
@@ -681,24 +687,32 @@ export function sessionScore(session) {
   return Math.max(...session.sets.map(setScore));
 }
 
+// Assisted exercises: lower is better, so a set's score is the assistance spread over the reps
+// (less assistance or more reps both lower it).
+function assistScore(set) {
+  return set.weight / (1 + set.reps / 30);
+}
+
 // level: 'none' | 'up' | 'down' | 'flat'. pct is the change along the trend line from first to last session.
 export function exerciseTrend(exercise) {
   const weighted = usesWeight(exercise);
+  const lowerBetter = Boolean(exercise.assisted) && weighted;
   const items = sortSessions(exercise.sessions).map((s) => ({
     id: s.id,
     date: s.date,
-    y: Math.round(sessionScore(s) * 10) / 10,
+    y: Math.round((lowerBetter ? Math.min(...s.sets.map(assistScore)) : sessionScore(s)) * 10) / 10,
   }));
-  const tr = buildTrend(items, 'higher');
+  const tr = buildTrend(items, lowerBetter ? 'lower' : 'higher');
   let pct = null;
   if (tr.slope !== null) {
     const xs = tr.points.map((p) => p.x);
     const y0 = tr.intercept + tr.slope * Math.min(...xs);
     const y1 = tr.intercept + tr.slope * Math.max(...xs);
-    if (y0 > 0) pct = ((y1 - y0) / y0) * 100;
+    // pct is progress: positive is better, which for assisted exercises means the assistance went down.
+    if (y0 > 0) pct = (((y1 - y0) / y0) * 100) * (lowerBetter ? -1 : 1);
   }
   const level = pct === null ? 'none' : pct > 1 ? 'up' : pct < -1 ? 'down' : 'flat';
-  return { ...tr, weighted, pct, level, count: items.length };
+  return { ...tr, weighted, lowerBetter, pct, level, count: items.length };
 }
 
 // ---------- tags ----------
@@ -823,11 +837,11 @@ export function recordsLog(data) {
   for (const e of data.exercises ?? []) {
     let top = null;
     for (const s of sortSessions(e.sessions)) {
-      const st = sessionStats(s);
-      if (top && compareTopSets(st, top) > 0) {
-        out.push({ kind: 'exercise', id: e.id, name: e.name, date: s.date, createdAt: s.createdAt ?? 0, stats: st, unit: e.unit, badges: ['New Best Top Set'], tags: s.tags ?? [] });
+      const st = sessionStats(s, e.assisted);
+      if (top && compareTopSets(st, top, e.assisted) > 0) {
+        out.push({ kind: 'exercise', id: e.id, name: e.name, date: s.date, createdAt: s.createdAt ?? 0, stats: st, unit: e.unit, assisted: Boolean(e.assisted), badges: ['New Best Top Set'], tags: s.tags ?? [] });
       }
-      if (!top || compareTopSets(st, top) > 0) top = st;
+      if (!top || compareTopSets(st, top, e.assisted) > 0) top = st;
     }
   }
   return out.sort((a, b) => (a.date !== b.date ? (a.date < b.date ? 1 : -1) : b.createdAt - a.createdAt));
@@ -945,6 +959,7 @@ export function normalizeData(raw, today = todayISO()) {
           category: typeof e.category === 'string' ? e.category : '',
           archived: Boolean(e.archived),
           linkedActivityId: e.linkedActivityId ?? null,
+          assisted: Boolean(e.assisted),
           sessions: Array.isArray(e.sessions) ? e.sessions.filter((s) => s && Array.isArray(s.sets)) : [],
         }))
     : [];

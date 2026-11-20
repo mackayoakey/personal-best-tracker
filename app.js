@@ -728,18 +728,18 @@ function detailView(a) {
 const fmtWeight = (w, unit) => (w > 0 ? `${fmtNum(w)} ${unit}` : 'bodyweight');
 
 // "3×8 @ 135 lb, 1×6 @ 135 lb": runs of identical sets are grouped.
-function setsText(sets, unit) {
+function setsText(sets, unit, assisted = false) {
   const groups = [];
   for (const s of sets) {
     const last = groups[groups.length - 1];
     if (last && last.reps === s.reps && last.weight === s.weight) last.n += 1;
     else groups.push({ n: 1, reps: s.reps, weight: s.weight });
   }
-  return groups.map((g) => `${g.n}×${fmtNum(g.reps)}${g.weight > 0 ? ` @ ${fmtNum(g.weight)} ${esc(unit)}` : ''}`).join(', ');
+  return groups.map((g) => `${g.n}×${fmtNum(g.reps)}${g.weight > 0 ? ` @ ${fmtNum(g.weight)} ${esc(unit)}${assisted ? ' assist' : ''}` : ''}`).join(', ');
 }
 
-function topSetText(st, unit) {
-  return st.topWeight > 0 ? `${fmtNum(st.topWeight)} ${esc(unit)} × ${fmtNum(st.topReps)}` : `${fmtNum(st.topReps)} reps`;
+function topSetText(st, unit, assisted = false) {
+  return st.topWeight > 0 ? `${fmtNum(st.topWeight)} ${esc(unit)}${assisted ? ' assist' : ''} × ${fmtNum(st.topReps)}` : `${fmtNum(st.topReps)} reps`;
 }
 
 const ICON_TILE = '<svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="currentColor"><rect x="2" y="2" width="7" height="7" rx="1.8"/><rect x="11" y="2" width="7" height="7" rx="1.8"/><rect x="2" y="11" width="7" height="7" rx="1.8"/><rect x="11" y="11" width="7" height="7" rx="1.8"/></svg>';
@@ -751,9 +751,9 @@ function viewToggle(scope, current) {
   return `<div class="view-toggle" role="group" aria-label="Layout">${btn('tile', 'Tile view', ICON_TILE)}${btn('list', 'List view', ICON_LIST)}</div>`;
 }
 
-function topSetHTML(st, unit) {
+function topSetHTML(st, unit, assisted = false) {
   return st.topWeight > 0
-    ? `${fmtNum(st.topWeight)}<small class="unit"> ${esc(unit)}</small> × ${fmtNum(st.topReps)}`
+    ? `${fmtNum(st.topWeight)}<small class="unit"> ${esc(unit)}${assisted ? ' assist' : ''}</small> × ${fmtNum(st.topReps)}`
     : `${fmtNum(st.topReps)}<small class="unit"> reps</small>`;
 }
 
@@ -777,7 +777,7 @@ function exerciseTile(e) {
         </div>
         ${
           last
-            ? `<div class="ex-main"><span class="value">${topSetHTML(core.sessionStats(last), e.unit)}</span><span class="sub">${fmtDate(last.date)} · ${e.sessions.length} session${e.sessions.length === 1 ? '' : 's'}</span></div>`
+            ? `<div class="ex-main"><span class="value">${topSetHTML(core.sessionStats(last, e.assisted), e.unit, e.assisted)}</span><span class="sub">${fmtDate(last.date)} · ${e.sessions.length} session${e.sessions.length === 1 ? '' : 's'}</span></div>`
             : '<p class="sub">No sessions yet.</p>'
         }
         <div class="ex-trend">${trendPill(tr)}</div>
@@ -799,7 +799,7 @@ function exerciseRow(e) {
         <span class="sub">${[e.category, last ? fmtDateShort(last.date) : 'No sessions'].filter(Boolean).map(esc).join(' · ')}</span>
       </div>
       <div class="row-side">
-        <span class="row-top">${last ? topSetHTML(core.sessionStats(last), e.unit) : '—'}</span>
+        <span class="row-top">${last ? topSetHTML(core.sessionStats(last, e.assisted), e.unit, e.assisted) : '—'}</span>
         ${trendPill(tr)}
       </div>
       <button class="btn primary small plus" type="button" data-action="log-session" data-id="${e.id}" aria-label="Log session for ${esc(e.name)}">＋</button>
@@ -863,14 +863,16 @@ function exerciseDetailView(e) {
       ? 'Log one more session to see your trend.'
       : tr.level === 'flat'
         ? `Holding steady across ${tr.count} sessions.`
-        : `Estimated max ${tr.level === 'up' ? 'up' : 'down'} ${Math.abs(tr.pct).toFixed(1)}% across ${tr.count} sessions.`;
+        : tr.lowerBetter
+          ? `Effective assistance ${tr.level === 'up' ? 'down' : 'up'} ${Math.abs(tr.pct).toFixed(1)}% across ${tr.count} sessions.`
+          : `Estimated max ${tr.level === 'up' ? 'up' : 'down'} ${Math.abs(tr.pct).toFixed(1)}% across ${tr.count} sessions.`;
 
   const rows = history
     .map(
       (s) => `
       <li class="attempt${best && s.id === best.session.id ? ' is-best' : ''}">
         <div class="attempt-main">
-          <strong class="session-sets">${setsText(s.sets, e.unit)}</strong>
+          <strong class="session-sets">${setsText(s.sets, e.unit, e.assisted)}</strong>
           <span class="sub">${fmtDate(s.date)}</span>
           ${best && s.id === best.session.id ? '<span class="badge">Best Top Set</span>' : ''}
         </div>
@@ -889,7 +891,7 @@ function exerciseDetailView(e) {
     <header class="detail-head">
       <div>
         <h1>${esc(e.name)}</h1>
-        <p class="sub">${e.category ? `${esc(e.category)} · ` : ''}Weights in ${esc(e.unit)}</p>
+        <p class="sub">${e.category ? `${esc(e.category)} · ` : ''}Weights in ${esc(e.unit)}${e.assisted ? ' · Assisted (less weight is better)' : ''}</p>
         ${e.notes ? `<p class="ex-notes sub">${esc(e.notes)}</p>` : ''}
       </div>
       <div class="row-actions">
@@ -902,12 +904,12 @@ function exerciseDetailView(e) {
     <section class="stats big">
       <div>
         <span class="label">Last Session</span>
-        <span class="value">${last ? topSetHTML(core.sessionStats(last), e.unit) : '—'}</span>
+        <span class="value">${last ? topSetHTML(core.sessionStats(last, e.assisted), e.unit, e.assisted) : '—'}</span>
         ${last ? `<span class="sub">${fmtDate(last.date)}</span>` : ''}
       </div>
       <div>
         <span class="label">Best Top Set</span>
-        <span class="value">${best ? topSetHTML(best.stats, e.unit) : '—'}</span>
+        <span class="value">${best ? topSetHTML(best.stats, e.unit, e.assisted) : '—'}</span>
         ${best ? `<span class="sub">${fmtDate(best.session.date)}</span>` : ''}
       </div>
     </section>
@@ -916,8 +918,8 @@ function exerciseDetailView(e) {
 
     <section class="panel">
       <h2>Strength Trend</h2>
-      <p class="sub">Weight and reps combine into one estimated-max number, so more weight or more reps both count as progress.</p>
-      ${chartView({ unit: tr.weighted ? e.unit : 'reps', direction: 'higher', target: null, startBest: null, attempts: [], trackOnly: true }, tr)}
+      <p class="sub">${tr.lowerBetter ? 'Assistance and reps combine into one number where lower is better, so less assistance or more reps both count as progress.' : 'Weight and reps combine into one estimated-max number, so more weight or more reps both count as progress.'}</p>
+      ${chartView({ unit: tr.weighted ? e.unit : 'reps', direction: tr.lowerBetter ? 'lower' : 'higher', target: null, startBest: null, attempts: [], trackOnly: true }, tr)}
     </section>
 
     <section class="panel">
@@ -1060,7 +1062,7 @@ function recordsView() {
   const items = log
     .map((r) => {
       const link = r.kind === 'best' ? `#/activity/${r.id}` : `#/exercise/${r.id}`;
-      const what = r.kind === 'best' ? fmtValue(r.value, r.unit) : topSetText(r.stats, r.unit);
+      const what = r.kind === 'best' ? fmtValue(r.value, r.unit) : topSetText(r.stats, r.unit, r.assisted);
       return `<li class="rec"><span class="rec-dot" aria-hidden="true"></span>
         <div><a href="${link}"><strong>${esc(r.name)}</strong></a> <span class="rec-val">${what}</span>
         <div class="sub">${fmtDate(r.date)}</div>
@@ -1119,8 +1121,8 @@ function showDay(date) {
     .join('');
   const sesHTML = sess
     .map(({ e, x }) => {
-      const st = core.sessionStats(x);
-      return `<li><a href="#/exercise/${e.id}" data-wk-close><strong>${esc(e.name)}</strong></a> ${setsText(x.sets, e.unit)}<div class="sub">${x.sets.length} set${x.sets.length === 1 ? '' : 's'}${st.volume ? ` · ${fmtNum(st.volume)} ${esc(e.unit)} total volume` : ''}</div>${x.notes ? `<div class="sub">${esc(x.notes)}</div>` : ''}${tagChipsHTML(x.tags)}</li>`;
+      const st = core.sessionStats(x, e.assisted);
+      return `<li><a href="#/exercise/${e.id}" data-wk-close><strong>${esc(e.name)}</strong></a> ${setsText(x.sets, e.unit, e.assisted)}<div class="sub">${x.sets.length} set${x.sets.length === 1 ? '' : 's'}${st.volume ? ` · ${fmtNum(st.volume)} ${esc(e.unit)} total volume` : ''}</div>${x.notes ? `<div class="sub">${esc(x.notes)}</div>` : ''}${tagChipsHTML(x.tags)}</li>`;
     })
     .join('');
   const empty = !atts.length && !sess.length;
@@ -1267,14 +1269,11 @@ function fieldInner(f) {
   if (f.type === 'sets') {
     const rows = f.value.map((s, i) => setRowHTML(i + 1, s)).join('');
     return `<div class="sets" data-sets>
-      <div class="sets-head"><span>Set</span><span>Weight (${esc(f.unit)})</span><span>Reps</span><span></span></div>
+      <div class="sets-head"><span>Set</span><span>${f.assisted ? 'Assist' : 'Weight'} (${esc(f.unit)})</span><span>Reps</span><span></span></div>
       <div data-sets-list style="display:grid;gap:8px">${rows}</div>
-      <div class="plate-bar" data-plate-bar data-unit="${esc(f.unit)}">
-        <div class="plate-adj">${[-5, -2.5, 2.5, 5, 10].map((n) => `<button type="button" data-plate-adj="${n}">${n > 0 ? '+' : '−'}${Math.abs(n)}</button>`).join('')}</div>
-        <div class="plate-text" data-plate-text>Tap a weight to see the plates and adjust it.</div>
-      </div>
+      ${f.assisted ? '' : `<div class="plate-bar" data-plate-bar data-unit="${esc(f.unit)}"><div class="plate-text" data-plate-text>Tap a weight to see the plates.</div></div>`}
       <button type="button" class="btn small" data-add-set>＋ Add Set</button>
-      <small>Leave weight empty for bodyweight exercises.</small>
+      <small>${f.assisted ? 'Leave a set empty to use the weight from set 1. Enter 0 or clear set 1 for no assistance.' : 'Sets 2 and up use the weight from set 1 unless you type their own. Leave all empty for bodyweight.'}</small>
     </div>`;
   }
   if (f.type === 'section') {
@@ -1368,7 +1367,7 @@ function openDialog(title, fields, { submitLabel = 'Save', onSubmit, secondary, 
       const unit = plateBar.dataset.unit;
       const text = plateBar.querySelector('[data-plate-text]');
       if (!current) {
-        text.textContent = 'Tap a weight to see the plates and adjust it.';
+        text.textContent = 'Tap a weight to see the plates.';
         return;
       }
       if (!(w > 0)) {
@@ -1389,16 +1388,21 @@ function openDialog(title, fields, { submitLabel = 'Save', onSubmit, secondary, 
     form.addEventListener('input', (e) => {
       if (e.target === current) showPlates();
     });
-    // Pointer-down is cancelled so the weight box keeps focus (and the keyboard) while adjusting.
-    plateBar.addEventListener('pointerdown', (e) => e.preventDefault());
-    plateBar.addEventListener('click', (e) => {
-      const b = e.target.closest('[data-plate-adj]');
-      if (!b || !current) return;
-      const next = Math.max(0, (Number(current.value) || 0) + Number(b.dataset.plateAdj));
-      current.value = String(Math.round(next * 100) / 100);
-      current.dispatchEvent(new Event('input', { bubbles: true }));
-    });
   }
+
+  // Sets 2 and up show set 1's weight in grey while empty, and use it when saved. Typing a weight there overrides it.
+  const syncWeightHints = () => {
+    const weights = [...form.querySelectorAll('[data-sets-list] [name=weight]')];
+    if (!weights.length) return;
+    const first = weights[0].value;
+    weights.forEach((w, i) => {
+      if (i > 0) w.placeholder = first || '0';
+    });
+  };
+  syncWeightHints();
+  form.addEventListener('input', (e) => {
+    if (e.target.matches('[data-sets-list] [name=weight]')) syncWeightHints();
+  });
 
   form.addEventListener('click', (e) => {
     const list = form.querySelector('[data-sets-list]');
@@ -1408,11 +1412,12 @@ function openDialog(title, fields, { submitLabel = 'Save', onSubmit, secondary, 
       const prev = rows[rows.length - 1];
       const tmp = document.createElement('div');
       tmp.innerHTML = setRowHTML(rows.length + 1, {
-        weight: prev?.querySelector('[name=weight]').value,
+        weight: prev?.querySelector('[name=weight]').value === rows[0]?.querySelector('[name=weight]').value ? '' : prev?.querySelector('[name=weight]').value,
         reps: prev?.querySelector('[name=reps]').value,
       });
       const row = tmp.firstElementChild;
       list.append(row);
+      syncWeightHints();
       row.querySelector('[name=reps]').focus();
       row.querySelector('[name=reps]').select();
     } else if (e.target.closest('[data-remove-set]')) {
@@ -1420,6 +1425,7 @@ function openDialog(title, fields, { submitLabel = 'Save', onSubmit, secondary, 
       if (rows.length > 1) {
         e.target.closest('.set-row').remove();
         renumber();
+        syncWeightHints();
       }
     }
   });
@@ -1784,6 +1790,7 @@ function openExerciseDialog(id = null) {
           ['kg', 'Kilograms (kg)'],
         ],
       },
+      { name: 'assisted', type: 'checkbox', label: 'Assisted: less weight is better (like assisted pull-ups)', value: existing?.assisted ?? false },
       {
         name: 'linkedActivityId',
         type: 'select',
@@ -1864,14 +1871,15 @@ function openSessionDialog(exerciseId, sessionId = null) {
   const existing = sessionId ? e.sessions.find((s) => s.id === sessionId) : null;
   // A new session starts from the last one, so you only change what moved.
   const basis = existing ?? core.lastSession(e);
-  const sets = basis ? basis.sets.map((s) => ({ ...s })) : [{}, {}, {}];
+  // Sets that match set 1's weight start empty, so they follow set 1 when it changes.
+  const sets = basis ? basis.sets.map((s, i) => ({ ...s, weight: i > 0 && s.weight === basis.sets[0].weight ? 0 : s.weight })) : [{}, {}, {}];
   const linked = !existing && e.linkedActivityId ? core.findActivity(state.data, e.linkedActivityId) : null;
-  const canLink = linked && !linked.archived && core.normalizeUnit(linked.unit) === e.unit;
+  const canLink = linked && !e.assisted && !linked.archived && core.normalizeUnit(linked.unit) === e.unit;
   openDialog(
     existing ? `Edit Session · ${e.name}` : `Log Session · ${e.name}`,
     [
       { name: 'date', type: 'date', label: 'Date', required: true, value: existing?.date ?? core.todayISO() },
-      { type: 'sets', value: sets, unit: e.unit },
+      { type: 'sets', value: sets, unit: e.unit, assisted: Boolean(e.assisted) },
       { name: 'notes', type: 'textarea', label: 'Notes', value: existing?.notes ?? '', rows: 2 },
       { type: 'tags', value: existing?.tags ?? [] },
       ...(canLink ? [{ name: 'alsoBest', type: 'checkbox', label: `Also log my heaviest set as an attempt for ${linked.name}`, value: true }] : []),
@@ -1885,6 +1893,8 @@ function openSessionDialog(exerciseId, sessionId = null) {
           weight: row.querySelector('[name=weight]').value,
           reps: row.querySelector('[name=reps]').value,
         }));
+        // An empty weight on set 2 and up means "same as set 1".
+        for (const r of rows.slice(1)) if (String(r.weight).trim() === '') r.weight = rows[0].weight;
         const { error, value } = core.parseSessionInput({ date: raw.date, notes: raw.notes, sets: rows, tags: readTags(form) });
         if (error) return error;
         const outcome = commit((d) => {

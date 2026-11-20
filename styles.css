@@ -602,8 +602,6 @@ html, body { overflow-x: hidden; overscroll-behavior-x: none; max-width: 100%; t
 .archived li { display: flex; justify-content: space-between; align-items: center; background: var(--panel); border-radius: 10px; padding: 8px 12px; color: var(--muted); }
 
 .plate-bar { background: var(--panel-2); border-radius: 12px; padding: 8px; display: grid; gap: 6px; margin-top: 8px; }
-.plate-adj { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
-.plate-adj button { appearance: none; border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 10px; padding: 8px 0; font-size: 0.9rem; }
 .plate-text { font-size: 0.82rem; color: var(--muted); min-height: 1.1em; }
 
 #weekly .wn h2 { padding-right: 36px; text-align: left; }
@@ -645,6 +643,8 @@ button.heat-cell.future { cursor: default; }
 
 /* date fields: iOS Safari gives them a fixed intrinsic width, which pushed them off the right edge */
 label { min-width: 0; }
+.dlg-form, .attempt-form label, .dlg-form label { grid-template-columns: minmax(0, 1fr); }
+.dlg-form label.check { grid-template-columns: none; }
 input[type="date"] {
   -webkit-appearance: none; appearance: none;
   display: block; box-sizing: border-box;
