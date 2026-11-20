@@ -148,7 +148,7 @@ main { max-width: 760px; margin: 0 auto; padding: 16px 16px 40px; animation: ris
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 20px;
-  padding: 16px 16px 16px 6px;
+  padding: 16px;
   cursor: pointer;
   background-image: linear-gradient(160deg, rgba(240, 152, 90, 0.04), transparent 55%);
   transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
@@ -156,18 +156,6 @@ main { max-width: 760px; margin: 0 auto; padding: 16px 16px 40px; animation: ris
 .card:hover { border-color: #4a525e; transform: translateY(-2px); box-shadow: 0 10px 28px rgba(0, 0, 0, 0.3); }
 .card.reached { border-color: rgba(127, 196, 192, 0.5); }
 .card.dragging { opacity: 0.9; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); z-index: 2; }
-.drag-handle {
-  touch-action: none;
-  cursor: grab;
-  background: none;
-  border: 0;
-  color: var(--muted);
-  font-size: 1.1rem;
-  padding: 6px 4px;
-  line-height: 1;
-  align-self: flex-start;
-  user-select: none;
-}
 .card-body { flex: 1; min-width: 0; }
 .card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .card-head h2 { margin-right: auto; }
@@ -663,6 +651,8 @@ main { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
 .toast { bottom: calc(80px + env(safe-area-inset-bottom)); }
 
 /* reordering rows and exercise tiles */
-.row-card.has-handle { grid-template-columns: auto minmax(0, 1fr) auto auto; padding-left: 4px; }
-.row-card .drag-handle { align-self: center; }
 .row-card.dragging { opacity: 0.92; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); z-index: 2; position: relative; }
+
+/* press and hold to reorder: no text selection or callout on the held item */
+[data-reorder] { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+body.reordering { -webkit-user-select: none; user-select: none; cursor: grabbing; }

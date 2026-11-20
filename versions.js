@@ -1,6 +1,15 @@
 // Newest first. Add a new entry at the top each time the app changes.
 export const VERSIONS = [
   {
+    number: 'V19',
+    date: '2026-11-20',
+    title: 'Hold and drag to reorder',
+    changes: [
+      'The ⋮⋮ dots are gone. Press and hold a tile or row for a moment, then drag it to a new spot.',
+      'Scrolling and tapping work as before. Only a hold starts a drag.',
+    ],
+  },
+  {
     number: 'V18',
     date: '2026-11-20',
     title: 'Drag to reorder everywhere',

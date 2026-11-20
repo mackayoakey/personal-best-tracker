@@ -407,8 +407,8 @@ function finderHTML(scope, total) {
 
 const canReorder = (scope) => (scope === 'b' ? state.bSort === 'manual' && !state.bQ.trim() : state.eSort === 'manual' && !state.eQ.trim());
 
-const dragHandle = (scope, name) =>
-  canReorder(scope) ? `<button class="drag-handle" type="button" data-reorder="${scope}" aria-label="Drag to reorder ${esc(name)}">⋮⋮</button>` : '';
+// Reorderable tiles and rows carry data-reorder; press and hold, then drag, to move them.
+const reorderAttr = (scope) => (canReorder(scope) ? ` data-reorder="${scope}"` : '');
 
 function archivedHTML(scope, archived) {
   if (!archived.length) return '';
@@ -449,7 +449,7 @@ function dashboardView() {
   const goals = list.filter((a) => !a.trackOnly && a.target != null).length;
   const summary = `${list.length} activit${list.length === 1 ? 'y' : 'ies'}` + (goals ? ` · ${reached} of ${goals} goal${goals === 1 ? '' : 's'} reached` : '');
   const shown = finderList('b', list);
-  const hint = list.length > 1 && canReorder('b') ? '<p class="hint">Tip: drag ⋮⋮ to reorder your activities.</p>' : '';
+  const hint = list.length > 1 && canReorder('b') ? '<p class="hint">Tip: press and hold a tile, then drag to reorder.</p>' : '';
   return `${notice}
     ${tabsView('bests')}
     <section class="hero">
@@ -559,8 +559,7 @@ function cardView(a, today) {
   });
   const line = needsGoal ? '' : statusLine(a, prog, left);
   return `
-    <article class="card compact${a.reachedGoal ? ' reached' : ''}" data-action="open" data-id="${a.id}">
-      ${dragHandle('b', a.name)}
+    <article class="card compact${a.reachedGoal ? ' reached' : ''}" data-action="open" data-id="${a.id}"${reorderAttr('b')}>
       <div class="card-body">
         <div class="card-head">
           <h2>${esc(a.name)}</h2>
@@ -586,8 +585,7 @@ function bestRow(a, today) {
   const pct = prog ? Math.round(prog.fraction * 100) : 0;
   const sub = [pb ? `Personal ${fmtValue(pb.value, a.unit)}` : '', yb ? `${core.currentYear()} ${fmtValue(yb.value, a.unit)}` : `No ${core.currentYear()} attempts`].filter(Boolean).join(' · ');
   return `
-    <article class="row-card${canReorder('b') ? ' has-handle' : ''}" data-action="open" data-id="${a.id}">
-      ${dragHandle('b', a.name)}
+    <article class="row-card" data-action="open" data-id="${a.id}"${reorderAttr('b')}>
       <div class="row-main">
         <strong>${esc(a.name)}</strong>
         <span class="sub">${sub}</span>
@@ -777,8 +775,7 @@ function exerciseTile(e) {
   const last = core.lastSession(e);
   const tr = core.exerciseTrend(e);
   return `
-    <article class="card${canReorder('e') ? '' : ' plain'}" data-action="open-exercise" data-id="${e.id}">
-      ${dragHandle('e', e.name)}
+    <article class="card plain" data-action="open-exercise" data-id="${e.id}"${reorderAttr('e')}>
       <div class="card-body">
         <div class="card-head">
           <h2>${esc(e.name)}</h2>
@@ -802,8 +799,7 @@ function exerciseRow(e) {
   const last = core.lastSession(e);
   const tr = core.exerciseTrend(e);
   return `
-    <article class="row-card${canReorder('e') ? ' has-handle' : ''}" data-action="open-exercise" data-id="${e.id}">
-      ${dragHandle('e', e.name)}
+    <article class="row-card" data-action="open-exercise" data-id="${e.id}"${reorderAttr('e')}>
       <div class="row-main">
         <strong>${esc(e.name)}</strong>
         <span class="sub">${[e.category, last ? fmtDateShort(last.date) : 'No sessions'].filter(Boolean).map(esc).join(' · ')}</span>
@@ -2263,7 +2259,7 @@ function toast(message, { action, onAction } = {}) {
 // ---------- events ----------
 
 function onViewClick(e) {
-  if (state.suppressClick || e.target.closest('.drag-handle')) return;
+  if (state.suppressClick) return;
   const el = e.target.closest('[data-action]');
   if (!el) return;
   const { action, id, attempt, session, cat, mode, scope } = el.dataset;
@@ -2428,13 +2424,43 @@ function onViewKeydown(e) {
   }
 }
 
-// Drag a tile or row by its ⋮⋮ handle to reorder Bests or Exercises.
-function onDragStart(e) {
-  const handle = e.target.closest('.drag-handle');
-  if (!handle || e.button > 0) return;
-  e.preventDefault();
+// Press and hold a tile or row for a moment, then drag it to reorder Bests or Exercises.
+// Moving before the hold finishes is a normal scroll or tap, so those still work.
+const HOLD_MS = 320;
+function onPressStart(e) {
+  if (e.button > 0 || e.isPrimary === false) return;
+  const card = e.target.closest('[data-reorder]');
+  if (!card || e.target.closest('button, a, input, select, textarea')) return;
+  const sx = e.clientX;
+  const sy = e.clientY;
+  const stop = () => {
+    clearTimeout(timer);
+    document.removeEventListener('pointermove', onMoveEarly);
+    document.removeEventListener('pointerup', stop);
+    document.removeEventListener('pointercancel', stop);
+  };
+  const onMoveEarly = (ev) => {
+    if (Math.hypot(ev.clientX - sx, ev.clientY - sy) > 8) stop();
+  };
+  const timer = setTimeout(() => {
+    stop();
+    beginDrag(card, e);
+  }, HOLD_MS);
+  document.addEventListener('pointermove', onMoveEarly);
+  document.addEventListener('pointerup', stop);
+  document.addEventListener('pointercancel', stop);
+}
 
-  const card = handle.closest('.card, .row-card');
+// While a tile is being dragged the page must not scroll under the finger.
+document.addEventListener('touchmove', (e) => { if (state.dragging) e.preventDefault(); }, { passive: false });
+document.addEventListener('contextmenu', (e) => { if (e.target.closest?.('[data-reorder]')) e.preventDefault(); });
+
+function beginDrag(card, e) {
+  const handle = card;
+  state.dragging = true;
+  state.suppressClick = true;
+  document.body.classList.add('reordering');
+  navigator.vibrate?.(12);
   const cards = [...card.parentElement.children].filter((c) => c.matches('.card[data-id], .row-card[data-id]'));
   const from = cards.indexOf(card);
   const others = cards.filter((c) => c !== card);
@@ -2511,6 +2537,8 @@ function onDragStart(e) {
     card.classList.remove('dragging');
     card.style.transform = '';
     line.remove();
+    state.dragging = false;
+    document.body.classList.remove('reordering');
     state.suppressClick = true;
     setTimeout(() => {
       state.suppressClick = false;
@@ -2565,7 +2593,7 @@ view.addEventListener('change', (e) => {
   else state.eSort = sel.value;
   render();
 });
-view.addEventListener('pointerdown', onDragStart);
+view.addEventListener('pointerdown', onPressStart);
 
 addBtn.addEventListener('click', () => (parseRoute().name === 'exercises' ? openExerciseDialog() : openActivityDialog()));
 statusEl.addEventListener('click', () => {
