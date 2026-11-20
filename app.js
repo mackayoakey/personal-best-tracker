@@ -334,6 +334,7 @@ function greeting() {
 function tabsView(active) {
   return `<nav class="tabs" aria-label="Sections">
     <a class="tab${active === 'bests' ? ' active' : ''}" href="#/"${active === 'bests' ? ' aria-current="page"' : ''}>Bests</a>
+    <button class="tab-log" type="button" data-action="quick-log" aria-label="Quick log">＋</button>
     <a class="tab${active === 'exercises' ? ' active' : ''}" href="#/exercises"${active === 'exercises' ? ' aria-current="page"' : ''}>Exercises</a>
   </nav>`;
 }
@@ -1081,6 +1082,137 @@ function recordsView() {
     ${log.length ? `<ul class="records">${items}</ul>` : '<p class="sub">No records yet. Your first new best will show up here.</p>'}`;
 }
 
+// ---------- year in review ----------
+
+const MONTH_LETTERS = 'JFMAMJJASOND';
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+function reviewView(year) {
+  const r = core.yearReview(state.data, year);
+  const years = core.reviewYears(state.data);
+  const i = years.indexOf(year);
+  const older = i >= 0 ? years[i + 1] : null;
+  const newer = i > 0 ? years[i - 1] : null;
+  const head = `<nav class="crumbs"><a href="#/">← All Activities</a></nav>
+    <div class="yr-nav">
+      ${older ? `<a href="#/review/${older}">← ${older}</a>` : '<span></span>'}
+      <h1>${year} In Review</h1>
+      ${newer ? `<a href="#/review/${newer}">${newer} →</a>` : '<span></span>'}
+    </div>`;
+  if (!r.days) return `${head}<p class="sub">Nothing logged in ${year} yet.</p>`;
+
+  const stat = (n, label) => `<div><strong>${n}</strong><span>${label}</span></div>`;
+  const stats = [stat(r.days, 'Days Logged'), stat(r.attempts, 'Attempts'), stat(r.sessions, 'Sessions'), stat(r.records.length, 'New Bests')].join('');
+
+  const max = Math.max(...r.months, 1);
+  const bars = r.months
+    .map((n, m) => `<div class="yr-col" title="${MONTH_NAMES[m]}: ${n} day${n === 1 ? '' : 's'}"><span class="yr-bar" style="height:${Math.round((n / max) * 100)}%"></span><span class="yr-m">${MONTH_LETTERS[m]}</span></div>`)
+    .join('');
+  const facts = [
+    r.topMonth !== null ? `Busiest month: ${MONTH_NAMES[r.topMonth]} (${r.months[r.topMonth]} days)` : '',
+    r.streak > 1 ? `Longest streak: ${r.streak} days in a row` : '',
+    r.sets ? `${r.sets} sets logged` : '',
+    ...Object.entries(r.volumes).map(([unit, v]) => `${Math.round(v).toLocaleString()} ${unit} lifted in total`),
+  ].filter(Boolean);
+
+  const recs = r.records
+    .slice(0, 8)
+    .map((x) => {
+      const link = x.kind === 'best' ? `#/activity/${x.id}` : `#/exercise/${x.id}`;
+      const what = x.kind === 'best' ? fmtValue(x.value, x.unit) : topSetText(x.stats, x.unit, x.assisted);
+      return `<li><a href="${link}"><strong>${esc(x.name)}</strong></a> <span class="rec-val">${what}</span> <span class="sub">${fmtDateShort(x.date)} · ${esc(x.badges[0])}</span></li>`;
+    })
+    .join('');
+
+  const goalRows = r.activities
+    .filter((a) => a.goal)
+    .map((a) => `<li><span>${a.goal.reached ? '✅' : '⬜'} <a href="#/activity/${a.id}">${esc(a.name)}</a></span><span class="sub">🎯 ${fmtValue(a.goal.target, a.unit)} · ${a.goal.reached ? 'Reached' : 'Not reached'}</span></li>`)
+    .join('');
+
+  const actRows = r.activities
+    .filter((a) => a.attempts)
+    .map((a) => {
+      const move = a.attempts > 1 && a.first !== a.best ? `${fmtValue(a.first, a.unit)} → ${fmtValue(a.best, a.unit)}${a.change ? ` · ${(a.change * 100).toFixed(1)}% better` : ''}` : `Best ${fmtValue(a.best, a.unit)}`;
+      return `<li><span><a href="#/activity/${a.id}"><strong>${esc(a.name)}</strong></a><span class="sub"> ${a.attempts} attempt${a.attempts === 1 ? '' : 's'}</span></span><span class="sub">${move}</span></li>`;
+    })
+    .join('');
+
+  const exRows = r.exercises
+    .map((e) => {
+      const move = e.sessions > 1 ? `${topSetText(e.first, e.unit, e.assisted)} → ${topSetText(e.best, e.unit, e.assisted)}` : `Top set ${topSetText(e.best, e.unit, e.assisted)}`;
+      return `<li><span><a href="#/exercise/${e.id}"><strong>${esc(e.name)}</strong></a><span class="sub"> ${e.sessions} session${e.sessions === 1 ? '' : 's'}</span></span><span class="sub">${move}</span></li>`;
+    })
+    .join('');
+
+  return `${head}
+    <section class="yr-card"><div class="yr-stats">${stats}</div></section>
+    <section class="yr-card"><h2>Days Logged By Month</h2><div class="yr-months">${bars}</div>
+      ${facts.length ? `<ul class="yr-facts">${facts.map((f) => `<li>${esc(f)}</li>`).join('')}</ul>` : ''}</section>
+    ${recs ? `<section class="yr-card"><h2>New Bests</h2><ul class="yr-list">${recs}</ul>${r.records.length > 8 ? '<p class="sub"><a href="#/records">See all in Records</a></p>' : ''}</section>` : ''}
+    ${goalRows ? `<section class="yr-card"><h2>Goals · ${r.goals.reached} Of ${r.goals.total} Reached</h2><ul class="yr-list">${goalRows}</ul></section>` : ''}
+    ${actRows ? `<section class="yr-card"><h2>Activities</h2><ul class="yr-list">${actRows}</ul></section>` : ''}
+    ${exRows ? `<section class="yr-card"><h2>Exercises</h2><ul class="yr-list">${exRows}</ul></section>` : ''}`;
+}
+
+// ---------- quick log ----------
+
+const quickEl = $('#quick');
+
+// A short list to pick from, most recently used first, then the usual log form opens.
+function openQuickLog(kind) {
+  const isSession = kind === 'session';
+  const items = (isSession ? state.data.exercises : state.data.activities).filter((x) => !x.archived);
+  if (!items.length) {
+    toast(isSession ? 'Add an exercise first.' : 'Add an activity first.');
+    return;
+  }
+  const lastOf = (x) => (isSession ? core.lastSession(x) : core.sortAttempts(x.attempts).at(-1)) ?? null;
+  const rank = (x) => {
+    const l = lastOf(x);
+    return l ? [l.date, l.createdAt ?? 0] : ['', 0];
+  };
+  items.sort((p, q) => {
+    const [pd, pc] = rank(p);
+    const [qd, qc] = rank(q);
+    return pd !== qd ? (pd < qd ? 1 : -1) : qc - pc;
+  });
+  if (items.length === 1) {
+    (isSession ? openSessionDialog : openAttemptDialog)(items[0].id);
+    return;
+  }
+  $('#quick-title').textContent = isSession ? 'Log A Session' : 'Log An Attempt';
+  quickEl.dataset.kind = kind;
+  $('#quick-list').innerHTML = items
+    .map((x) => {
+      const l = lastOf(x);
+      const last = l ? (isSession ? `${topSetText(core.sessionStats(l, x.assisted), x.unit, x.assisted)} · ${fmtDateShort(l.date)}` : `${fmtValue(l.result, x.unit)} · ${fmtDateShort(l.date)}`) : 'Nothing logged yet';
+      return `<button type="button" data-quick-id="${x.id}"><strong>${esc(x.name)}</strong><span class="sub">${last}</span></button>`;
+    })
+    .join('');
+  if (!quickEl.open) quickEl.showModal();
+}
+
+quickEl.addEventListener('click', (e) => {
+  if (e.target === quickEl || e.target.closest('[data-close-quick]')) {
+    quickEl.close();
+    return;
+  }
+  const b = e.target.closest('[data-quick-id]');
+  if (!b) return;
+  quickEl.close();
+  (quickEl.dataset.kind === 'session' ? openSessionDialog : openAttemptDialog)(b.dataset.quickId);
+});
+
+// Links like #/quick-log (from an app shortcut) open the picker over the right screen.
+function handleQuickRoute() {
+  const m = location.hash.match(/^#\/quick-(log|session)$/);
+  if (!m) return false;
+  history.replaceState(null, '', m[1] === 'log' ? '#/' : '#/exercises');
+  render();
+  openQuickLog(m[1] === 'log' ? 'attempt' : 'session');
+  return true;
+}
+
 // ---------- weekly summary ----------
 
 const WEEKLY_KEY = 'pbt.weeklyShown';
@@ -1164,6 +1296,8 @@ function parseRoute() {
   const exDetail = hash.match(/^#\/exercise\/([\w-]+)$/);
   if (exDetail) return { name: 'exercise', id: exDetail[1] };
   if (hash === '#/exercises') return { name: 'exercises' };
+  const review = hash.match(/^#\/review(?:\/(\d{4}))?$/);
+  if (review) return { name: 'review', year: review[1] ? Number(review[1]) : core.currentYear() };
   if (hash === '#/records') return { name: 'records' };
   if (hash === '#/ideas') return { name: 'ideas' };
   if (hash === '#/versions') return { name: 'versions' };
@@ -1195,6 +1329,9 @@ function render() {
   } else if (route.name === 'exercises') {
     html = exercisesView();
     title = 'Exercises · Personal Bests';
+  } else if (route.name === 'review') {
+    html = reviewView(route.year);
+    title = `${route.year} In Review · Personal Bests`;
   } else if (route.name === 'records') {
     html = recordsView();
     title = 'Records · Personal Bests';
@@ -2370,6 +2507,9 @@ function onViewClick(e) {
     case 'log-session':
       openSessionDialog(id);
       break;
+    case 'quick-log':
+      openQuickLog(parseRoute().name === 'exercises' ? 'session' : 'attempt');
+      break;
     case 'edit-session':
       openSessionDialog(id, session);
       break;
@@ -2635,6 +2775,7 @@ dlg.addEventListener('cancel', (e) => {
 });
 
 window.addEventListener('hashchange', () => {
+  if (handleQuickRoute()) return;
   state.tagFilter = '';
   window.scrollTo(0, 0);
   render();
@@ -2673,7 +2814,7 @@ if ('serviceWorker' in navigator) {
 // Start the app once the code screen is passed (a device that entered the code stays unlocked for 7 days).
 function start() {
   state.started = true;
-  render();
+  if (!handleQuickRoute()) render();
   setStatus(isConfigured() ? 'syncing' : 'local');
   const pulled = pull();
   checkWhatsNew();

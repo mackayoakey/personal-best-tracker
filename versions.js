@@ -1,6 +1,16 @@
 // Newest first. Add a new entry at the top each time the app changes.
 export const VERSIONS = [
   {
+    number: 'V20',
+    date: '2026-11-20',
+    title: 'Year in Review and quick log',
+    changes: [
+      'New Year In Review page (in the menu): days logged, a month-by-month chart, new bests, goals reached, and how each activity and exercise moved. Use the arrows to see other years.',
+      'A round ＋ button in the bottom bar opens a quick list. On Bests it logs an attempt, on Exercises it logs a session, most recently used first.',
+      'On Android and desktop, pressing and holding the app icon offers Log Attempt and Log Session shortcuts.',
+    ],
+  },
+  {
     number: 'V19',
     date: '2026-11-20',
     title: 'Hold and drag to reorder',

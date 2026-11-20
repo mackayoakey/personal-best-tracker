@@ -863,6 +863,89 @@ export function recordsLog(data) {
   return out.sort((a, b) => (a.date !== b.date ? (a.date < b.date ? 1 : -1) : b.createdAt - a.createdAt));
 }
 
+// ---------- year in review ----------
+
+// Years that have anything logged, newest first (always includes the current year).
+export function reviewYears(data, today = todayISO()) {
+  const years = new Set([currentYear(today)]);
+  for (const d of loggedDates(data)) years.add(yearOf(d));
+  return [...years].sort((a, b) => b - a);
+}
+
+// Everything worth remembering about one calendar year, worked out from the attempts and sessions.
+export function yearReview(data, year) {
+  const logged = [...loggedDates(data)].filter((d) => yearOf(d) === year).sort();
+  let streak = 0;
+  let run = 0;
+  let prev = null;
+  for (const d of logged) {
+    run = prev && dayNumber(d) - dayNumber(prev) === 1 ? run + 1 : 1;
+    streak = Math.max(streak, run);
+    prev = d;
+  }
+  const months = Array(12).fill(0);
+  for (const d of logged) months[Number(d.slice(5, 7)) - 1] += 1;
+  const topMonth = Math.max(...months);
+
+  const records = recordsLog(data).filter((r) => yearOf(r.date) === year);
+  const recordsFor = (id) => records.filter((r) => r.id === id);
+
+  let attempts = 0;
+  const activities = [];
+  const goals = { reached: 0, total: 0 };
+  for (const a of data.activities) {
+    const list = sortAttempts(a.attempts.filter((t) => yearOf(t.date) === year));
+    attempts += list.length;
+    const hist = (a.goalHistory ?? []).find((h) => h.year === year);
+    const goal = hist
+      ? { target: hist.target, reached: hist.reached }
+      : !a.trackOnly && a.target != null && goalYear(a) === year
+        ? { target: a.target, reached: Boolean(a.reachedGoal) }
+        : null;
+    if (goal) {
+      goals.total += 1;
+      if (goal.reached) goals.reached += 1;
+    }
+    if (!list.length && !goal) continue;
+    let best = null;
+    for (const t of list) if (!best || isBetter(t.result, best.result, a.direction)) best = t;
+    const first = list[0] ?? null;
+    const change = first && best && first.result !== 0 ? Math.abs(best.result - first.result) / Math.abs(first.result) : null;
+    activities.push({
+      id: a.id, name: a.name, unit: a.unit, attempts: list.length,
+      first: first?.result ?? null, best: best?.result ?? null, change: change && change > 0 ? change : null,
+      newBests: recordsFor(a.id).filter((r) => r.badges.some((b) => b.includes('Personal Best'))).length,
+      goal,
+    });
+  }
+
+  let sessions = 0;
+  let sets = 0;
+  const volumes = {};
+  const exercises = [];
+  for (const e of data.exercises ?? []) {
+    const list = sortSessions(e.sessions.filter((s) => yearOf(s.date) === year));
+    if (!list.length) continue;
+    sessions += list.length;
+    let best = null;
+    let volume = 0;
+    for (const s of list) {
+      const st = sessionStats(s, e.assisted);
+      sets += st.setCount;
+      volume += st.volume;
+      if (!best || compareTopSets(st, best, e.assisted) > 0) best = st;
+    }
+    if (volume > 0) volumes[e.unit] = (volumes[e.unit] ?? 0) + volume;
+    exercises.push({ id: e.id, name: e.name, unit: e.unit, assisted: Boolean(e.assisted), sessions: list.length, first: sessionStats(list[0], e.assisted), best, volume });
+  }
+
+  return {
+    year, days: logged.length, attempts, sessions, sets, volumes, streak, months,
+    topMonth: topMonth > 0 ? months.indexOf(topMonth) : null,
+    records, goals, activities, exercises,
+  };
+}
+
 // A seven-day summary starting on a Monday.
 export function weekSummary(data, mondayISO) {
   const start = mondayISO;
